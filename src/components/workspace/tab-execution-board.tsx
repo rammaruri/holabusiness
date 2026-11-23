@@ -87,6 +87,14 @@ export function TabExecutionBoard({ project }: { project: Project }) {
     [users]
   );
 
+  const getTodayFormatted = () => {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
   const {
     register,
     handleSubmit,
@@ -97,13 +105,28 @@ export function TabExecutionBoard({ project }: { project: Project }) {
     defaultValues: {
       priority: 'Medium',
       status: 'To Do',
-      due_date: project.target_end_date || new Date().toISOString().slice(0, 10),
+      due_date: getTodayFormatted(),
+      assignee_id: currentUser.role === 'admin' ? '' : currentUser.id,
     },
   });
 
   const canCreate = permissions.canManageTasks && !project.is_archived;
   const canUpdateStatus =
     permissions.canUpdateTaskStatus && !project.is_archived;
+
+  const handleOpenNewTask = () => {
+    reset({
+      priority: 'Medium',
+      status: 'To Do',
+      due_date: getTodayFormatted(),
+      title: '',
+      description: '',
+      assignee_id: currentUser.role === 'admin' ? '' : currentUser.id,
+      blocked_by_task_id: '',
+      linked_deliverable: '',
+    });
+    setShowNewTask(true);
+  };
 
   const onCreateSubmit = (values: NewTaskFormValues) => {
     createTask({
@@ -117,7 +140,12 @@ export function TabExecutionBoard({ project }: { project: Project }) {
       blocked_by_task_id: values.blocked_by_task_id || null,
       linked_deliverable: values.linked_deliverable || null,
     });
-    reset();
+    reset({
+      priority: 'Medium',
+      status: 'To Do',
+      due_date: getTodayFormatted(),
+      assignee_id: currentUser.role === 'admin' ? '' : currentUser.id,
+    });
     setShowNewTask(false);
   };
 
@@ -156,7 +184,7 @@ export function TabExecutionBoard({ project }: { project: Project }) {
         </div>
 
         {canCreate && (
-          <Button size="sm" onClick={() => setShowNewTask(true)}>
+          <Button size="sm" onClick={handleOpenNewTask}>
             <Plus className="h-3.5 w-3.5" /> New Task
           </Button>
         )}
@@ -204,22 +232,33 @@ export function TabExecutionBoard({ project }: { project: Project }) {
                 <Input type="date" {...register('due_date')} />
               </div>
 
-              <div className="space-y-1">
-                <label className="text-xs font-medium text-zinc-700">
-                  Assignee
-                </label>
-                <select
-                  {...register('assignee_id')}
-                  className="flex h-9 w-full rounded-md border border-zinc-200 bg-white px-2.5 text-xs"
-                >
-                  <option value="">Unassigned</option>
-                  {staffUsers.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {currentUser.role === 'admin' ? (
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-zinc-700">
+                    Assignee
+                  </label>
+                  <select
+                    {...register('assignee_id')}
+                    className="flex h-9 w-full rounded-md border border-zinc-200 bg-white px-2.5 text-xs"
+                  >
+                    <option value="">Unassigned</option>
+                    {staffUsers.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-zinc-700">
+                    Assignee
+                  </label>
+                  <div className="flex h-9 w-full items-center rounded-md border border-zinc-200 bg-zinc-50 px-2.5 text-xs text-zinc-700">
+                    <span>{currentUser.name} (Assigned to you)</span>
+                  </div>
+                </div>
+              )}
 
               <div className="space-y-1">
                 <label className="text-xs font-medium text-zinc-700">
@@ -361,13 +400,15 @@ export function TabExecutionBoard({ project }: { project: Project }) {
                         )
                       : null;
                     const isBeingDragged = draggedTaskId === task.id;
+                    const isTaskOwner = currentUser.role === 'admin' || task.assignee_id === currentUser.id;
+                    const canDragAndMove = canUpdateStatus && isTaskOwner;
 
                     return (
                       <div
                         key={task.id}
-                        draggable={canUpdateStatus}
+                        draggable={canDragAndMove}
                         onDragStart={(e) => {
-                          if (!canUpdateStatus) return;
+                          if (!canDragAndMove) return;
                           e.dataTransfer.setData('text/plain', task.id);
                           e.dataTransfer.effectAllowed = 'move';
                           setDraggedTaskId(task.id);
@@ -378,7 +419,7 @@ export function TabExecutionBoard({ project }: { project: Project }) {
                         }}
                         className={cn(
                           'rounded-[10px] border bg-white p-3 shadow-[0_1px_3px_rgba(0,0,0,0.06),0_1px_2px_rgba(0,0,0,0.04)] space-y-2 transition-all',
-                          canUpdateStatus &&
+                          canDragAndMove &&
                             'cursor-grab active:cursor-grabbing hover:border-[#4361ee] hover:shadow-[0_4px_16px_rgba(0,0,0,0.08)] hover:-translate-y-0.5',
                           isBeingDragged &&
                             'opacity-40 scale-95 border-dashed border-[#4361ee]',
@@ -389,7 +430,7 @@ export function TabExecutionBoard({ project }: { project: Project }) {
                       >
                         <div className="flex items-start justify-between gap-1.5">
                           <div className="flex items-start gap-1 min-w-0">
-                            {canUpdateStatus && (
+                            {canDragAndMove && (
                               <GripVertical className="h-3.5 w-3.5 mt-0.5 shrink-0 text-[#9ca3af]" />
                             )}
                             <span className="text-[13px] font-medium text-[#111827] leading-[1.4]">
@@ -438,7 +479,7 @@ export function TabExecutionBoard({ project }: { project: Project }) {
                           </a>
                         )}
 
-                        {canUpdateStatus && (
+                        {canDragAndMove && (
                           <div className="pt-1 border-t border-zinc-100 flex items-center justify-between gap-1">
                             <select
                               value={task.status}

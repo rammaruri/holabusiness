@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { ArrowRight, Eye, EyeOff, Lock, ShieldCheck } from 'lucide-react';
+import { ArrowRight, Eye, EyeOff, Lock } from 'lucide-react';
 import { useAuth } from '@/components/providers/app-providers';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -19,14 +19,13 @@ type LoginFormValues = z.infer<typeof loginSchema>;
 
 export default function LoginPage() {
   const router = useRouter();
-  const { users, signInWithCredentials } = useAuth();
+  const { signInWithCredentials } = useAuth();
   const [authError, setAuthError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
 
   const {
     register,
     handleSubmit,
-    setValue,
     formState: { errors },
   } = useForm<LoginFormValues>({
     resolver: zodResolver(loginSchema),
@@ -144,50 +143,6 @@ export default function LoginPage() {
             <ArrowRight className="h-4 w-4" />
           </Button>
         </form>
-
-        <div className="relative my-4">
-          <div className="absolute inset-0 flex items-center">
-            <span className="w-full border-t border-[#e5e7eb]" />
-          </div>
-          <div className="relative flex justify-center text-[10px] uppercase tracking-wider font-semibold">
-            <span className="bg-white px-2.5 text-[#9ca3af]">
-              Authorized Founder Accounts
-            </span>
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          {users.map((u) => (
-            <button
-              key={u.id}
-              type="button"
-              onClick={() => {
-                setValue('email', u.email);
-                setValue('password', u.password || 'admin');
-              }}
-              className="flex w-full items-center justify-between rounded-[8px] border border-[#e5e7eb] bg-white p-2.5 text-left hover:border-[#4361ee] hover:bg-[#fafbff] transition-all cursor-pointer"
-            >
-              <div>
-                <div className="text-[13px] font-semibold text-[#111827]">
-                  {u.name}
-                </div>
-                <div className="text-[11px] text-[#9ca3af]">{u.email}</div>
-              </div>
-              <div className="flex items-center gap-1.5">
-                {u.is_main_admin ? (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-[20px] text-[10.5px] font-semibold bg-blue-100 text-blue-800 border border-blue-200">
-                    <ShieldCheck className="h-3 w-3 mr-1" />
-                    Main Admin
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-[20px] text-[10.5px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                    Admin
-                  </span>
-                )}
-              </div>
-            </button>
-          ))}
-        </div>
       </div>
     </div>
   );

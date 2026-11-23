@@ -7,10 +7,12 @@ import {
   Check,
   Eye,
   EyeOff,
+  FolderKanban,
   KeyRound,
   Lock,
   Pencil,
   Plus,
+  ShieldAlert,
   ShieldCheck,
   Trash2,
   UserCheck,
@@ -23,13 +25,16 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Modal } from '@/components/ui/modal';
-import { ROLE_LABELS, type User } from '@/types/agency';
+import { ROLE_LABELS, type User, type UserRole, getProjectSimpleStatus } from '@/types/agency';
+import { cn } from '@/lib/utils';
 
 export default function TeamPage() {
   const {
     currentUser,
     users,
-    createAdminUser,
+    accessibleProjects,
+    memberships,
+    createUser,
     updateUser,
     changeUserPassword,
     toggleUserDisabled,
@@ -41,29 +46,52 @@ export default function TeamPage() {
   const [changingPassUser, setChangingPassUser] = useState<User | null>(null);
   const [deletingUser, setDeletingUser] = useState<User | null>(null);
 
-  // Edit User Form
+  // Edit User Form State
   const [editName, setEditName] = useState('');
   const [editEmail, setEditEmail] = useState('');
   const [editTitle, setEditTitle] = useState('');
+  const [editRole, setEditRole] = useState<UserRole>('member');
+  const [editAssignedProjects, setEditAssignedProjects] = useState<string[]>([]);
 
-  // Add User Form
+  // Add User Form State
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
-  const [title, setTitle] = useState('Co-Founder & Admin');
+  const [title, setTitle] = useState('');
+  const [role, setRole] = useState<UserRole>('member');
   const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
+  const [assignedProjectIds, setAssignedProjectIds] = useState<string[]>([]);
 
-  // Change Password Form
+  // Change Password Form State
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [passError, setPassError] = useState('');
   const [passSuccess, setPassSuccess] = useState(false);
+
+  // Access guard: only admins can manage the team
+  if (currentUser.role !== 'admin') {
+    return (
+      <div className="mx-auto max-w-xl py-16 text-center">
+        <div className="rounded-[12px] border border-amber-200 bg-amber-50/50 p-6 space-y-3">
+          <ShieldAlert className="mx-auto h-8 w-8 text-amber-600" />
+          <h2 className="text-[16px] font-bold text-amber-900">
+            Access Restricted
+          </h2>
+          <p className="text-[13px] text-amber-700">
+            Team Management and user invitations are reserved for Founders &amp; Administrators.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   const openEditModal = (u: User) => {
     setEditingUser(u);
     setEditName(u.name);
     setEditEmail(u.email);
     setEditTitle(u.title || '');
+    setEditRole(u.role || 'member');
+    setEditAssignedProjects(memberships[u.id] || []);
   };
 
   const handleSaveEditUser = (e: React.FormEvent) => {
@@ -74,26 +102,51 @@ export default function TeamPage() {
       name: editName.trim(),
       email: editEmail.trim(),
       title: editTitle.trim() || undefined,
+      role: editRole,
+      assignedProjectIds: editRole === 'member' ? editAssignedProjects : undefined,
     });
     setEditingUser(null);
   };
 
-  const handleCreateAdmin = (e: React.FormEvent) => {
+  const handleCreateUser = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !email.trim()) return;
 
-    createAdminUser({
+    createUser({
       name: name.trim(),
       email: email.trim(),
-      title: title.trim() || 'Co-Founder & Admin',
+      role,
+      title: title.trim() || (role === 'member' ? 'Team Member' : 'Co-Founder & Admin'),
       password: password.trim() || undefined,
+      assignedProjectIds: role === 'member' ? assignedProjectIds : [],
     });
 
     setIsAddOpen(false);
     setName('');
     setEmail('');
-    setTitle('Co-Founder & Admin');
+    setTitle('');
+    setRole('member');
     setPassword('');
+    setAssignedProjectIds([]);
+  };
+
+  const toggleProjectSelection = (
+    projectId: string,
+    isEdit: boolean = false
+  ) => {
+    if (isEdit) {
+      setEditAssignedProjects((prev) =>
+        prev.includes(projectId)
+          ? prev.filter((id) => id !== projectId)
+          : [...prev, projectId]
+      );
+    } else {
+      setAssignedProjectIds((prev) =>
+        prev.includes(projectId)
+          ? prev.filter((id) => id !== projectId)
+          : [...prev, projectId]
+      );
+    }
   };
 
   const handleChangePassword = (e: React.FormEvent) => {
@@ -136,10 +189,10 @@ export default function TeamPage() {
         <div>
           <h1 className="text-[20px] font-bold text-[#111827] tracking-tight flex items-center gap-2">
             <Users className="h-5 w-5 text-[#4361ee]" />
-            Founders &amp; Admins Hub
+            Team &amp; Access Management
           </h1>
           <p className="text-[13px] text-[#6b7280] mt-0.5">
-            Operations are managed exclusively by Founders &amp; Admins. All accounts share the same live synchronized workspace.
+            Manage Founders, Admins, and Employees. Assign team members to specific projects and Kanban task boards.
           </p>
         </div>
 
@@ -149,17 +202,17 @@ export default function TeamPage() {
             className="h-[36px] px-4 rounded-[8px] bg-[#4361ee] hover:bg-[#3451d1] text-white shadow-[0_2px_6px_rgba(67,97,238,0.25)] text-[13px] font-medium gap-1.5"
           >
             <Plus className="h-4 w-4" />
-            Add Founder / Admin
+            Add Team Member
           </Button>
         ) : (
           <div className="rounded-[8px] bg-zinc-100 px-3 py-1.5 text-xs text-zinc-600 border border-zinc-200 flex items-center gap-1.5">
             <Lock className="h-3.5 w-3.5 text-zinc-400" />
-            <span>Only Main Admin can invite new administrators</span>
+            <span>Only Main Admin can invite new members</span>
           </div>
         )}
       </div>
 
-      {/* 2. Tinted Info Banner */}
+      {/* 2. Info Banner */}
       <div className="rounded-[12px] bg-gradient-to-r from-[#eef0fd] to-[#e8f0fe] border border-[rgba(67,97,238,0.18)] p-4">
         <div className="flex items-start gap-3">
           <div className="w-[38px] h-[38px] rounded-[10px] bg-[#4361ee] text-white flex items-center justify-center shrink-0">
@@ -167,26 +220,27 @@ export default function TeamPage() {
           </div>
           <div className="space-y-1 text-[12px]">
             <div className="font-bold text-[#111827] flex items-center gap-2">
-              <span>Full Administrative Access &amp; Real-time Data Sync</span>
+              <span>Role-Based Access Control (RBAC)</span>
               <span className="rounded-[20px] bg-[#dbeafe] px-2 py-0.5 text-[10.5px] font-semibold text-[#1d4ed8]">
-                Founders Only
+                Admins &amp; Employees
               </span>
             </div>
             <p className="text-[#6b7280] leading-relaxed">
-              Every founder has complete control over projects, renewals, client meetings, proposals, task execution, encrypted credentials, and financial invoices. Any update made by one founder is immediately visible to everyone.
+              <strong>Founders &amp; Admins</strong> have full visibility over client meetings, proposals, billing, credentials, and all projects. 
+              <strong> Employees</strong> only see the specific projects they are assigned to, where they can execute tasks on the Kanban board and submit deliverables.
             </p>
           </div>
         </div>
       </div>
 
-      {/* 3. Admin Directory Card */}
+      {/* 3. Team Directory Card */}
       <div className="rounded-[12px] bg-white border border-[#e5e7eb] shadow-[0_1px_3px_rgba(0,0,0,0.06),0_1px_2px_rgba(0,0,0,0.04)] overflow-hidden">
         <div className="flex items-center justify-between p-5 border-b border-[#e5e7eb]">
           <h2 className="text-[15px] font-bold text-[#111827]">
-            Active Founders &amp; Admins ({users.length})
+            Active Team Members ({users.length})
           </h2>
           <span className="text-[12px] text-[#9ca3af]">
-            Current: <strong className="text-[#111827]">{currentUser.name}</strong>
+            Logged in as: <strong className="text-[#111827]">{currentUser.name}</strong>
           </span>
         </div>
 
@@ -200,6 +254,11 @@ export default function TeamPage() {
               .slice(0, 2)
               .toUpperCase();
 
+            const userProjectIds = memberships[u.id] || [];
+            const userAssignedProjects = accessibleProjects.filter((p) =>
+              userProjectIds.includes(p.id)
+            );
+
             return (
               <div
                 key={u.id}
@@ -207,12 +266,14 @@ export default function TeamPage() {
                   u.is_disabled ? 'bg-zinc-50/70 opacity-90' : 'hover:bg-[#fafbff]'
                 }`}
               >
-                <div className="flex items-center gap-3">
+                <div className="flex items-start gap-3">
                   <div
-                    className={`w-[40px] h-[40px] rounded-full font-bold text-[13px] flex items-center justify-center shrink-0 shadow-xs ${
+                    className={`w-[40px] h-[40px] rounded-full font-bold text-[13px] flex items-center justify-center shrink-0 shadow-xs mt-0.5 ${
                       u.is_disabled
                         ? 'bg-zinc-300 text-zinc-600'
-                        : 'bg-[#4361ee] text-white'
+                        : u.role === 'admin'
+                        ? 'bg-[#4361ee] text-white'
+                        : 'bg-purple-600 text-white'
                     }`}
                   >
                     {initials}
@@ -239,18 +300,58 @@ export default function TeamPage() {
                       ) : u.is_main_admin ? (
                         <span className="inline-flex items-center px-2 py-0.5 rounded-[20px] text-[11px] font-semibold bg-blue-100 text-blue-800 border border-blue-200">
                           <ShieldCheck className="h-3 w-3 mr-1" />
-                          Main Admin / Primary Founder
+                          Main Admin
                         </span>
-                      ) : (
+                      ) : u.role === 'admin' ? (
                         <span className="inline-flex items-center px-2 py-0.5 rounded-[20px] text-[11px] font-semibold bg-[#d1fae5] text-[#065f46]">
                           <ShieldCheck className="h-3 w-3 mr-1" />
-                          Co-Founder &amp; Admin
+                          Founder &amp; Admin
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-[20px] text-[11px] font-semibold bg-purple-100 text-purple-800 border border-purple-200">
+                          Employee
                         </span>
                       )}
                     </div>
+
                     <div className="text-[12px] text-[#6b7280] mt-0.5">
-                      {u.email} · {u.title || 'Co-Founder & Admin'}
+                      {u.email} · {u.title || (u.role === 'admin' ? 'Co-Founder & Admin' : 'Employee')}
                     </div>
+
+                    {/* Assigned Projects Preview for Employees */}
+                    {u.role !== 'admin' && (
+                      <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[11px] font-medium text-[#6b7280] flex items-center gap-1">
+                          <FolderKanban className="h-3 w-3 text-purple-500" />
+                          Assigned:
+                        </span>
+                        {userAssignedProjects.length > 0 ? (
+                          userAssignedProjects.map((p) => {
+                            const pStatus = getProjectSimpleStatus(p);
+                            return (
+                              <span
+                                key={p.id}
+                                className={cn(
+                                  'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-[4px] text-[10.5px] font-medium border',
+                                  pStatus === 'Active'
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                    : pStatus === 'Inactive'
+                                    ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                    : 'bg-blue-50 text-blue-700 border-blue-200'
+                                )}
+                              >
+                                <span>{p.title}</span>
+                                <span className="text-[9px] opacity-75">({pStatus})</span>
+                              </span>
+                            );
+                          })
+                        ) : (
+                          <span className="text-[11px] text-zinc-400 italic">
+                            No projects assigned yet
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -281,7 +382,7 @@ export default function TeamPage() {
                     Change Password
                   </button>
 
-                  {/* Main Admin Only Controls for other Admins */}
+                  {/* Main Admin Only Controls for other accounts */}
                   {currentUser.is_main_admin && !u.is_main_admin && !isCurrent && (
                     <>
                       <button
@@ -325,14 +426,14 @@ export default function TeamPage() {
         </div>
       </div>
 
-      {/* Modal: Edit Founder / Admin Details */}
+      {/* Modal: Edit User Details & Project Assignments */}
       {editingUser && (
         <Modal
           isOpen={!!editingUser}
           onClose={() => setEditingUser(null)}
-          title={`Edit Details: ${editingUser.name}`}
+          title={`Edit Member: ${editingUser.name}`}
           icon={<Pencil className="h-5 w-5 text-[#4361ee]" />}
-          maxWidth="max-w-[460px]"
+          maxWidth="max-w-[480px]"
           footer={
             <>
               <Button
@@ -345,7 +446,7 @@ export default function TeamPage() {
               </Button>
               <Button
                 type="submit"
-                form="edit-admin-form"
+                form="edit-user-form"
                 className="h-[36px] px-5 rounded-[8px] bg-[#4361ee] hover:bg-[#3451d1] text-white text-[13px]"
               >
                 Save Changes
@@ -353,7 +454,7 @@ export default function TeamPage() {
             </>
           }
         >
-          <form id="edit-admin-form" onSubmit={handleSaveEditUser} className="space-y-3.5">
+          <form id="edit-user-form" onSubmit={handleSaveEditUser} className="space-y-3.5">
             <div className="space-y-1">
               <label className="block text-[12px] font-medium text-[#6b7280]">
                 Full Name *
@@ -362,7 +463,7 @@ export default function TeamPage() {
                 required
                 value={editName}
                 onChange={(e) => setEditName(e.target.value)}
-                placeholder="e.g. Elena Vance"
+                placeholder="e.g. Ramesh Patel"
                 className="text-[13px] h-[36px]"
               />
             </div>
@@ -376,33 +477,96 @@ export default function TeamPage() {
                 type="email"
                 value={editEmail}
                 onChange={(e) => setEditEmail(e.target.value)}
-                placeholder="elena@holabusiness.io"
+                placeholder="ramesh@holabusiness.in"
                 className="text-[13px] h-[36px]"
               />
             </div>
 
-            <div className="space-y-1">
-              <label className="block text-[12px] font-medium text-[#6b7280]">
-                Role / Title
-              </label>
-              <Input
-                value={editTitle}
-                onChange={(e) => setEditTitle(e.target.value)}
-                placeholder="e.g. Co-Founder &amp; CTO"
-                className="text-[13px] h-[36px]"
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="block text-[12px] font-medium text-[#6b7280]">
+                  Role
+                </label>
+                <select
+                  value={editRole}
+                  onChange={(e) => setEditRole(e.target.value as UserRole)}
+                  className="w-full h-[36px] rounded-[6px] border border-[#e5e7eb] bg-white px-2.5 text-[13px] text-[#111827] outline-none focus:border-[#4361ee]"
+                  disabled={editingUser.is_main_admin}
+                >
+                  <option value="member">Employee</option>
+                  <option value="admin">Founder &amp; Admin</option>
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="block text-[12px] font-medium text-[#6b7280]">
+                  Title / Designation
+                </label>
+                <Input
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  placeholder="e.g. Frontend Developer"
+                  className="text-[13px] h-[36px]"
+                />
+              </div>
             </div>
+
+            {/* Project Assignments if Employee */}
+            {editRole === 'member' && (
+              <div className="space-y-1.5 pt-1">
+                <label className="block text-[12px] font-medium text-[#374151]">
+                  Assign to Projects (Access Scope)
+                </label>
+                <div className="max-h-44 overflow-y-auto rounded-[8px] border border-[#e5e7eb] p-2 space-y-1 bg-[#f9fafb]">
+                  {accessibleProjects.length === 0 ? (
+                    <p className="text-[12px] text-zinc-400 p-1">No projects available.</p>
+                  ) : (
+                    accessibleProjects.map((p) => {
+                      const isChecked = editAssignedProjects.includes(p.id);
+                      const pStatus = getProjectSimpleStatus(p);
+                      return (
+                        <label
+                          key={p.id}
+                          className="flex items-center gap-2 px-2 py-1.5 rounded-[6px] hover:bg-white text-[12.5px] text-[#111827] cursor-pointer"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => toggleProjectSelection(p.id, true)}
+                            className="rounded border-[#d1d5db] text-[#4361ee] focus:ring-[#4361ee]"
+                          />
+                          <span className="font-medium truncate flex-1 min-w-0">{p.title}</span>
+                          <span className="text-[10px] text-[#9ca3af] shrink-0">({p.project_type})</span>
+                          <span
+                            className={cn(
+                              'text-[9.5px] px-1.5 py-0.2 rounded font-semibold shrink-0',
+                              pStatus === 'Active'
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                : pStatus === 'Inactive'
+                                ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                : 'bg-blue-50 text-blue-700 border border-blue-200'
+                            )}
+                          >
+                            ● {pStatus}
+                          </span>
+                        </label>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
           </form>
         </Modal>
       )}
 
-      {/* Modal: Add New Founder / Admin */}
+      {/* Modal: Add New Team Member (Admin or Employee) */}
       <Modal
         isOpen={isAddOpen}
         onClose={() => setIsAddOpen(false)}
-        title="Add New Founder / Admin"
-        icon={<ShieldCheck className="h-5 w-5 text-[#4361ee]" />}
-        maxWidth="max-w-[460px]"
+        title="Add New Team Member"
+        icon={<Plus className="h-5 w-5 text-[#4361ee]" />}
+        maxWidth="max-w-[480px]"
         footer={
           <>
             <Button
@@ -415,22 +579,58 @@ export default function TeamPage() {
             </Button>
             <Button
               type="submit"
-              form="add-admin-form"
+              form="add-member-form"
               className="h-[36px] px-5 rounded-[8px] bg-[#4361ee] hover:bg-[#3451d1] text-white text-[13px]"
             >
-              Create Admin
+              Create Account
             </Button>
           </>
         }
       >
-        <form id="add-admin-form" onSubmit={handleCreateAdmin} className="space-y-3.5">
+        <form id="add-member-form" onSubmit={handleCreateUser} className="space-y-3.5">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <label className="block text-[12px] font-medium text-[#6b7280]">
+                Account Role *
+              </label>
+              <select
+                value={role}
+                onChange={(e) => {
+                  const newRole = e.target.value as UserRole;
+                  setRole(newRole);
+                  if (newRole === 'admin') {
+                    setTitle('Co-Founder & Admin');
+                  } else {
+                    setTitle('Software Engineer');
+                  }
+                }}
+                className="w-full h-[36px] rounded-[6px] border border-[#e5e7eb] bg-white px-2.5 text-[13px] text-[#111827] outline-none focus:border-[#4361ee]"
+              >
+                <option value="member">Employee</option>
+                <option value="admin">Founder &amp; Admin</option>
+              </select>
+            </div>
+
+            <div className="space-y-1">
+              <label className="block text-[12px] font-medium text-[#6b7280]">
+                Title / Designation
+              </label>
+              <Input
+                placeholder={role === 'member' ? 'e.g. UI/UX Designer' : 'e.g. Co-Founder'}
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                className="h-[36px] text-[13px]"
+              />
+            </div>
+          </div>
+
           <div>
             <label className="block text-[12px] font-medium text-[#6b7280] mb-1">
               Full Name *
             </label>
             <Input
               required
-              placeholder="e.g. Ramesh Patel"
+              placeholder="e.g. Alex Rivera"
               value={name}
               onChange={(e) => setName(e.target.value)}
               className="h-[36px] text-[13px]"
@@ -444,7 +644,7 @@ export default function TeamPage() {
             <Input
               required
               type="email"
-              placeholder="ramesh@holabusiness.com"
+              placeholder="alex@holabusiness.in"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               className="h-[36px] text-[13px]"
@@ -453,24 +653,12 @@ export default function TeamPage() {
 
           <div>
             <label className="block text-[12px] font-medium text-[#6b7280] mb-1">
-              Title / Position
-            </label>
-            <Input
-              placeholder="Co-Founder & Admin"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              className="h-[36px] text-[13px]"
-            />
-          </div>
-
-          <div>
-            <label className="block text-[12px] font-medium text-[#6b7280] mb-1">
-              Temporary Password
+              Password
             </label>
             <div className="relative">
               <Input
                 type={showPass ? 'text' : 'password'}
-                placeholder="Leave blank for default: admin123"
+                placeholder={`Leave blank for default: ${role === 'member' ? 'employee123' : 'admin123'}`}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="h-[36px] text-[13px] pr-9"
@@ -484,6 +672,57 @@ export default function TeamPage() {
               </button>
             </div>
           </div>
+
+          {/* Project Assignments if Employee */}
+          {role === 'member' && (
+            <div className="space-y-1.5 pt-1">
+              <div className="flex items-center justify-between">
+                <label className="block text-[12px] font-medium text-[#374151]">
+                  Assign to Projects
+                </label>
+                <span className="text-[11px] text-[#9ca3af]">
+                  {assignedProjectIds.length} selected
+                </span>
+              </div>
+              <div className="max-h-40 overflow-y-auto rounded-[8px] border border-[#e5e7eb] p-2 space-y-1 bg-[#f9fafb]">
+                {accessibleProjects.length === 0 ? (
+                  <p className="text-[12px] text-zinc-400 p-1">No projects available.</p>
+                ) : (
+                  accessibleProjects.map((p) => {
+                    const isChecked = assignedProjectIds.includes(p.id);
+                    const pStatus = getProjectSimpleStatus(p);
+                    return (
+                      <label
+                        key={p.id}
+                        className="flex items-center gap-2 px-2 py-1.5 rounded-[6px] hover:bg-white text-[12.5px] text-[#111827] cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => toggleProjectSelection(p.id, false)}
+                          className="rounded border-[#d1d5db] text-[#4361ee] focus:ring-[#4361ee]"
+                        />
+                        <span className="font-medium truncate flex-1 min-w-0">{p.title}</span>
+                        <span className="text-[10px] text-[#9ca3af] shrink-0">({p.project_type})</span>
+                        <span
+                          className={cn(
+                            'text-[9.5px] px-1.5 py-0.2 rounded font-semibold shrink-0',
+                            pStatus === 'Active'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : pStatus === 'Inactive'
+                              ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                              : 'bg-blue-50 text-blue-700 border border-blue-200'
+                          )}
+                        >
+                          ● {pStatus}
+                        </span>
+                      </label>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          )}
         </form>
       </Modal>
 
@@ -521,92 +760,81 @@ export default function TeamPage() {
             </div>
           )}
           {passSuccess && (
-            <div className="rounded-[8px] bg-[#ecfdf5] border border-[#bbf7d0] p-2 text-[12px] text-[#065f46] flex items-center gap-1.5">
+            <div className="rounded-[8px] bg-[#f0fdf4] border border-[#86efac] p-2 text-[12px] text-[#16a34a] flex items-center gap-1.5">
               <Check className="h-4 w-4" />
-              Password updated successfully!
+              <span>Password updated successfully!</span>
             </div>
           )}
 
           <div>
             <label className="block text-[12px] font-medium text-[#6b7280] mb-1">
-              New Password (min 4 characters)
+              New Password
             </label>
             <Input
-              required
               type="password"
+              required
+              placeholder="Minimum 4 characters"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
-              placeholder="Enter new password"
               className="h-[36px] text-[13px]"
             />
           </div>
 
           <div>
             <label className="block text-[12px] font-medium text-[#6b7280] mb-1">
-              Confirm New Password
+              Confirm Password
             </label>
             <Input
-              required
               type="password"
+              required
+              placeholder="Re-type new password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              placeholder="Re-enter new password"
               className="h-[36px] text-[13px]"
             />
           </div>
         </form>
       </Modal>
 
-      {/* Modal: Confirm Delete User */}
-      <Modal
-        isOpen={!!deletingUser}
-        onClose={() => setDeletingUser(null)}
-        title="Delete Admin Account"
-        icon={<AlertTriangle className="h-5 w-5 text-red-600" />}
-        maxWidth="max-w-[440px]"
-        footer={
-          <>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setDeletingUser(null)}
-              className="h-[36px] px-4 text-[13px]"
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              onClick={handleConfirmDelete}
-              className="h-[36px] px-4 rounded-[8px] bg-red-600 hover:bg-red-700 text-white text-[13px] font-medium shadow-[0_2px_6px_rgba(239,68,68,0.25)]"
-            >
-              Permanently Delete Account
-            </Button>
-          </>
-        }
-      >
-        <div className="space-y-3 text-[13px] text-zinc-600">
-          <p>
-            Are you sure you want to permanently delete the admin account for{' '}
-            <strong className="text-zinc-900">{deletingUser?.name}</strong> (
-            <span className="font-mono text-xs">{deletingUser?.email}</span>)?
-          </p>
-          <div className="rounded-[8px] bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800 space-y-1.5">
-            <p className="font-semibold flex items-center gap-1.5 text-amber-900">
-              <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600" />
-              Safety &amp; Audit Preservation:
-            </p>
+      {/* Modal: Confirm Permanent Deletion */}
+      {deletingUser && (
+        <Modal
+          isOpen={!!deletingUser}
+          onClose={() => setDeletingUser(null)}
+          title="Delete Account"
+          icon={<AlertTriangle className="h-5 w-5 text-red-600" />}
+          maxWidth="max-w-[420px]"
+          footer={
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setDeletingUser(null)}
+                className="h-[36px] px-4 text-[13px]"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={handleConfirmDelete}
+                className="h-[36px] px-5 rounded-[8px] bg-red-600 hover:bg-red-700 text-white text-[13px]"
+              >
+                Permanently Delete
+              </Button>
+            </>
+          }
+        >
+          <div className="space-y-2 text-[13px] text-zinc-600">
             <p>
-              • This will permanently revoke this user&apos;s ability to log into HolaBusiness.
+              Are you sure you want to permanently delete the account for{' '}
+              <strong className="text-zinc-900">{deletingUser.name}</strong> ({deletingUser.email})?
             </p>
-            <p>
-              • Any projects, tasks, or audit logs previously created or edited by this user will remain intact.
-            </p>
-            <p>
-              • If you only need to temporarily restrict access, consider using <strong>Disable</strong> instead.
+            <p className="text-[12px] text-red-600">
+              This action cannot be undone. They will immediately lose access to all workspaces and tasks.
             </p>
           </div>
-        </div>
-      </Modal>
+        </Modal>
+      )}
     </div>
   );
 }

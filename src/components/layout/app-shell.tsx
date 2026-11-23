@@ -147,15 +147,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // Filter projects for the switcher dropdown
   const filteredSwitcherProjects = useMemo(() => {
     const q = projectSearch.trim().toLowerCase();
-    return activeProjects.filter(
+    const sourceList = currentUser.role === 'admin' ? activeProjects : accessibleProjects;
+    return sourceList.filter(
       (p) =>
         !q ||
         p.title.toLowerCase().includes(q) ||
         p.client_name.toLowerCase().includes(q)
     );
-  }, [activeProjects, projectSearch]);
+  }, [activeProjects, accessibleProjects, currentUser.role, projectSearch]);
 
   const navItems = useMemo(() => {
+    const isAdmin = currentUser.role === 'admin';
     const items = [
       {
         label: 'Dashboard',
@@ -169,25 +171,25 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         href: '/contacts',
         icon: Contact,
         badge: undefined,
-        visible: true,
+        visible: isAdmin,
       },
       {
         label: 'Drafts',
         href: '/drafts',
         icon: Archive,
         badge: undefined,
-        visible: true,
+        visible: isAdmin,
       },
       {
-        label: 'Founders & Admins',
+        label: 'Team Management',
         href: '/team',
         icon: Users,
         badge: undefined,
-        visible: true,
+        visible: isAdmin,
       },
     ];
     return items.filter((i) => i.visible);
-  }, []);
+  }, [currentUser.role]);
 
   const searchResults = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -345,6 +347,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 ) : (
                   filteredSwitcherProjects.map((p) => {
                     const isSelected = activeProjectId === p.id;
+                    const pStatus = getProjectSimpleStatus(p);
                     return (
                       <button
                         key={p.id}
@@ -359,9 +362,32 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                             : 'text-[#6b7280] hover:bg-[#f3f4f6] hover:text-[#111827]'
                         )}
                       >
-                        <span className="w-2 h-2 rounded-full bg-[#10b981] shrink-0" />
+                        <span
+                          className={cn(
+                            'w-2 h-2 rounded-full shrink-0',
+                            pStatus === 'Active'
+                              ? 'bg-[#10b981]'
+                              : pStatus === 'Inactive'
+                              ? 'bg-[#f59e0b]'
+                              : 'bg-[#3b82f6]'
+                          )}
+                        />
                         <div className="flex-1 min-w-0">
-                          <div className="truncate font-medium">{p.title}</div>
+                          <div className="truncate font-medium flex items-center justify-between gap-1">
+                            <span className="truncate">{p.title}</span>
+                            <span
+                              className={cn(
+                                'text-[9.5px] px-1.5 py-0.2 rounded font-semibold',
+                                pStatus === 'Active'
+                                  ? 'bg-emerald-50 text-emerald-700'
+                                  : pStatus === 'Inactive'
+                                  ? 'bg-amber-50 text-amber-700'
+                                  : 'bg-blue-50 text-blue-700'
+                              )}
+                            >
+                              {pStatus}
+                            </span>
+                          </div>
                           <div className="text-[10px] text-[#9ca3af] truncate">{p.project_type}</div>
                         </div>
                       </button>
@@ -583,14 +609,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   </div>
 
                   <div className="pt-2 space-y-1">
-                    <Link
-                      href="/team"
-                      onClick={() => setPersonaMenuOpen(false)}
-                      className="flex items-center gap-2 px-2.5 py-1.5 rounded-[7px] text-[12.5px] font-medium text-[#4b5563] hover:bg-[#f3f4f6] hover:text-[#111827] transition-colors"
-                    >
-                      <Users className="h-4 w-4 text-[#9ca3af]" />
-                      <span>Manage Founders &amp; Admins</span>
-                    </Link>
+                    {currentUser.role === 'admin' && (
+                      <Link
+                        href="/team"
+                        onClick={() => setPersonaMenuOpen(false)}
+                        className="flex items-center gap-2 px-2.5 py-1.5 rounded-[7px] text-[12.5px] font-medium text-[#4b5563] hover:bg-[#f3f4f6] hover:text-[#111827] transition-colors"
+                      >
+                        <Users className="h-4 w-4 text-[#9ca3af]" />
+                        <span>Manage Team &amp; Access</span>
+                      </Link>
+                    )}
 
                     <button
                       type="button"

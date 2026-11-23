@@ -17,24 +17,62 @@ const ADMIN_PERMISSIONS: RolePermissions = {
   canManageMeetingsAndProposals: true,
 };
 
+const EMPLOYEE_PERMISSIONS: RolePermissions = {
+  canCreateProject: false,
+  canEditScope: false,
+  canManageTasks: true,
+  canUpdateTaskStatus: true,
+  canUploadAssets: true,
+  canViewCredentials: false,
+  canManageCredentials: false,
+  canRevealCredentials: false,
+  canViewInternalDelays: true,
+  canViewAuditLogs: false,
+  canToggleArchive: false,
+  canManageUsers: false,
+  canSubmitClientSignOff: false,
+  canManageMeetingsAndProposals: false,
+};
+
+const CLIENT_PERMISSIONS: RolePermissions = {
+  canCreateProject: false,
+  canEditScope: false,
+  canManageTasks: false,
+  canUpdateTaskStatus: false,
+  canUploadAssets: false,
+  canViewCredentials: false,
+  canManageCredentials: false,
+  canRevealCredentials: false,
+  canViewInternalDelays: false,
+  canViewAuditLogs: false,
+  canToggleArchive: false,
+  canManageUsers: false,
+  canSubmitClientSignOff: true,
+  canManageMeetingsAndProposals: false,
+};
+
 const PERMISSION_MATRIX: Record<UserRole, RolePermissions> = {
   admin: ADMIN_PERMISSIONS,
   pm: ADMIN_PERMISSIONS,
-  member: ADMIN_PERMISSIONS,
-  client: ADMIN_PERMISSIONS,
+  member: EMPLOYEE_PERMISSIONS,
+  client: CLIENT_PERMISSIONS,
 };
 
 export function getPermissions(
   role: UserRole,
-  user?: { is_main_admin?: boolean }
+  user?: { is_main_admin?: boolean; role?: UserRole }
 ): RolePermissions {
+  const base = PERMISSION_MATRIX[role] || EMPLOYEE_PERMISSIONS;
   return {
-    ...ADMIN_PERMISSIONS,
-    canManageUsers: Boolean(user?.is_main_admin),
+    ...base,
+    canManageUsers: role === 'admin' && Boolean(user?.is_main_admin ?? true),
   };
 }
 
 export function canAccessRoute(role: UserRole, pathname: string): boolean {
+  if (role !== 'admin' && pathname.startsWith('/team')) {
+    return false;
+  }
   return true;
 }
 

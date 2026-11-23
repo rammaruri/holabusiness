@@ -40,6 +40,7 @@ import type {
   TaskStatus,
   UpdateAssetInput,
   User,
+  UserRole,
 } from '@/types/agency';
 import {
   DEMO_PROJECT_MEMBERSHIPS,
@@ -290,7 +291,26 @@ interface AuthContextValue {
     title?: string;
     password?: string;
   }) => User;
-  updateUser: (userId: string, updates: { name: string; email: string; title?: string }) => void;
+  createUser: (input: {
+    name: string;
+    email: string;
+    role?: UserRole;
+    title?: string;
+    password?: string;
+    assignedProjectIds?: string[];
+  }) => User;
+  updateUser: (
+    userId: string,
+    updates: {
+      name: string;
+      email: string;
+      title?: string;
+      role?: UserRole;
+      assignedProjectIds?: string[];
+    }
+  ) => void;
+  assignUserToProjects: (userId: string, projectIds: string[]) => void;
+  memberships: Record<string, string[]>;
   changeUserPassword: (userId: string, newPass: string) => void;
   toggleUserDisabled: (userId: string) => void;
   deleteUser: (userId: string) => void;
@@ -387,8 +407,8 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
   const [projects, setProjects] = useState<Project[]>(() =>
     getInitialStorage('holabusiness_projects', INITIAL_SHELL_PROJECTS)
   );
-  const [memberships, setMemberships] = useState<Record<string, string[]>>(
-    DEMO_PROJECT_MEMBERSHIPS
+  const [memberships, setMemberships] = useState<Record<string, string[]>>(() =>
+    getInitialStorage('holabusiness_memberships', DEMO_PROJECT_MEMBERSHIPS)
   );
   const [contacts, setContacts] = useState<ProjectContact[]>(() =>
     getInitialStorage('holabusiness_contacts', INITIAL_CONTACTS)
@@ -490,6 +510,10 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
             setActivityLogs(d.activityLogs);
             if (typeof window !== 'undefined') localStorage.setItem('holabusiness_activity_logs', JSON.stringify(d.activityLogs));
           }
+          if (d.memberships && typeof d.memberships === 'object' && !Array.isArray(d.memberships)) {
+            setMemberships(d.memberships);
+            if (typeof window !== 'undefined') localStorage.setItem('holabusiness_memberships', JSON.stringify(d.memberships));
+          }
           setIsCloudSynced(true);
           hasLoadedCloud.current = true;
         }
@@ -525,6 +549,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         localStorage.setItem('holabusiness_credentials', JSON.stringify(credentials));
         localStorage.setItem('holabusiness_renewals', JSON.stringify(renewals));
         localStorage.setItem('holabusiness_activity_logs', JSON.stringify(activityLogs));
+        localStorage.setItem('holabusiness_memberships', JSON.stringify(memberships));
       } catch {}
     }
 
@@ -547,6 +572,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
             tasks,
             renewals,
             activityLogs,
+            memberships,
           },
         }),
       })
@@ -569,6 +595,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
     tasks,
     renewals,
     activityLogs,
+    memberships,
   ]);
 
   const currentUser = useMemo(
@@ -606,15 +633,27 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
     [currentUser.id]
   );
 
-  // All Admins / Founders share the exact same projects and live workspace state
+  // Scoped project access: Admins see all projects; Employees only see assigned projects
   const accessibleProjects = useMemo(() => {
-    return projects;
-  }, [projects]);
+    if (currentUser.role === 'admin') {
+      return projects;
+    }
+    const assignedProjectIds = new Set(memberships[currentUser.id] || []);
+    for (const t of tasks) {
+      if (t.assignee_id === currentUser.id) {
+        assignedProjectIds.add(t.project_id);
+      }
+    }
+    return projects.filter((p) => assignedProjectIds.has(p.id));
+  }, [projects, currentUser.id, currentUser.role, memberships, tasks]);
 
-  // All Admins / Founders share the exact same tasks
+  // Scoped task access: Admins see all tasks; Employees ONLY see tasks assigned to them (Option A - Strict Privacy)
   const accessibleTasks = useMemo(() => {
-    return tasks;
-  }, [tasks]);
+    if (currentUser.role === 'admin') {
+      return tasks;
+    }
+    return tasks.filter((t) => t.assignee_id === currentUser.id);
+  }, [tasks, currentUser.id, currentUser.role]);
 
   const switchPersona = (userId: string) => {
     const found = users.find((u) => u.id === userId);
@@ -678,22 +717,26 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const createAdminUser = useCallback(
+  const createUser = useCallback(
     (input: {
       name: string;
       email: string;
+      role?: UserRole;
       title?: string;
       password?: string;
+      assignedProjectIds?: string[];
     }): User => {
-      const newId = makeId('usr-admin');
+      const role = input.role || 'member';
+      const isEmp = role === 'member';
+      const newId = makeId(isEmp ? 'usr-emp' : 'usr-admin');
       const newUser: User = {
         id: newId,
         name: input.name.trim(),
         email: input.email.trim(),
-        role: 'admin',
+        role,
         is_main_admin: false,
-        title: input.title?.trim() || 'Co-Founder & Admin',
-        password: input.password?.trim() || 'admin123',
+        title: input.title?.trim() || (isEmp ? 'Team Member' : 'Co-Founder & Admin'),
+        password: input.password?.trim() || (isEmp ? 'employee123' : 'admin123'),
         created_at: new Date().toISOString(),
       };
       setUsers((prev) => {
@@ -703,20 +746,69 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         }
         return updated;
       });
+      if (input.assignedProjectIds && input.assignedProjectIds.length > 0) {
+        setMemberships((prev) => {
+          const updated = {
+            ...prev,
+            [newId]: input.assignedProjectIds!,
+          };
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('holabusiness_memberships', JSON.stringify(updated));
+          }
+          return updated;
+        });
+      }
       appendLog(
         projects[0]?.id || 'system',
         'SCOPE_UPDATED',
         'project',
         newId,
-        `Added new Founder & Admin: ${newUser.name} (${newUser.email})`
+        `Added new ${newUser.role === 'admin' ? 'Founder & Admin' : 'Employee'}: ${newUser.name} (${newUser.email})`
       );
       return newUser;
     },
     [projects, appendLog]
   );
 
+  const createAdminUser = useCallback(
+    (input: {
+      name: string;
+      email: string;
+      title?: string;
+      password?: string;
+    }): User => {
+      return createUser({ ...input, role: 'admin' });
+    },
+    [createUser]
+  );
+
+  const assignUserToProjects = useCallback(
+    (userId: string, projectIds: string[]) => {
+      setMemberships((prev) => {
+        const updated = {
+          ...prev,
+          [userId]: projectIds,
+        };
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('holabusiness_memberships', JSON.stringify(updated));
+        }
+        return updated;
+      });
+    },
+    []
+  );
+
   const updateUser = useCallback(
-    (userId: string, updates: { name: string; email: string; title?: string }) => {
+    (
+      userId: string,
+      updates: {
+        name: string;
+        email: string;
+        title?: string;
+        role?: UserRole;
+        assignedProjectIds?: string[];
+      }
+    ) => {
       setUsers((prev) => {
         const updated = prev.map((u) => {
           if (u.id === userId) {
@@ -725,6 +817,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
               name: updates.name.trim(),
               email: updates.email.trim(),
               title: updates.title !== undefined ? updates.title.trim() : u.title,
+              role: updates.role !== undefined ? updates.role : u.role,
             };
           }
           return u;
@@ -735,6 +828,19 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         return updated;
       });
 
+      if (updates.assignedProjectIds !== undefined) {
+        setMemberships((prev) => {
+          const updated = {
+            ...prev,
+            [userId]: updates.assignedProjectIds!,
+          };
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('holabusiness_memberships', JSON.stringify(updated));
+          }
+          return updated;
+        });
+      }
+
       appendLog(
         projects[0]?.id || 'system',
         'SCOPE_UPDATED',
@@ -743,7 +849,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         `Updated account details for ${updates.name.trim()} (${updates.email.trim()})`
       );
     },
-    [currentUser.id, projects, appendLog]
+    [projects, appendLog]
   );
 
   const changeUserPassword = useCallback(
@@ -1392,6 +1498,9 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
 
   const updateProjectStatus = useCallback(
     (projectId: string, newStatus: ProjectStatus) => {
+      if (currentUser.role !== 'admin') {
+        throw new Error('Only Administrators can change project lifecycle status.');
+      }
       const now = new Date().toISOString();
       const isCompleted = newStatus === 'Completed' || newStatus === 'Completed/Archived';
       setProjects((prev) =>
@@ -1417,7 +1526,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         { status: newStatus }
       );
     },
-    [appendLog]
+    [currentUser.role, appendLog]
   );
 
   const deleteProject = useCallback(
@@ -1907,12 +2016,16 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         todayDate
       );
 
+      const effectiveAssigneeId = currentUser.role === 'admin'
+        ? (input.assignee_id || null)
+        : currentUser.id;
+
       const newTask: Task = {
         id: taskId,
         project_id: input.project_id,
         title: input.title.trim(),
         description: input.description.trim(),
-        assignee_id: input.assignee_id || null,
+        assignee_id: effectiveAssigneeId,
         status: input.status,
         priority: input.priority,
         start_date: input.start_date || null,
@@ -1928,11 +2041,11 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
 
       setTasks((prev) => [newTask, ...prev]);
 
-      if (input.assignee_id) {
+      if (effectiveAssigneeId) {
         setMemberships((prev) => ({
           ...prev,
-          [input.assignee_id!]: Array.from(
-            new Set([...(prev[input.assignee_id!] ?? []), input.project_id])
+          [effectiveAssigneeId]: Array.from(
+            new Set([...(prev[effectiveAssigneeId] ?? []), input.project_id])
           ),
         }));
       }
@@ -1945,7 +2058,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         { status: newTask.status, priority: newTask.priority, due_date: newTask.due_date }
       );
     },
-    [projects, permissions.canManageTasks, todayDate, appendLog]
+    [projects, permissions.canManageTasks, todayDate, currentUser, appendLog]
   );
 
   const updateTaskStatus = useCallback(
@@ -1955,6 +2068,11 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
 
       const existing = tasks.find((t) => t.id === taskId);
       if (!existing || existing.status === status) return;
+
+      // Option A strict check: Employees can only move their own tasks
+      if (currentUser.role !== 'admin' && existing.assignee_id !== currentUser.id) {
+        return;
+      }
 
       const now = new Date().toISOString();
       const completedAt = status === 'Done' ? now : null;
@@ -1986,7 +2104,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         { before: existing.status, after: status }
       );
     },
-    [projects, permissions.canUpdateTaskStatus, tasks, todayDate, appendLog]
+    [projects, permissions.canUpdateTaskStatus, tasks, todayDate, currentUser, appendLog]
   );
 
   const updateTaskDeliverable = useCallback(
@@ -1996,6 +2114,11 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
 
       const existing = tasks.find((t) => t.id === taskId);
       if (!existing) return;
+
+      // Option A strict check: Employees can only submit deliverables for their own tasks
+      if (currentUser.role !== 'admin' && existing.assignee_id !== currentUser.id) {
+        return;
+      }
 
       setTasks((prev) =>
         prev.map((t) =>
@@ -2018,7 +2141,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         { deliverable_url: deliverableUrl.trim() }
       );
     },
-    [projects, permissions.canUpdateTaskStatus, tasks, appendLog]
+    [projects, permissions.canUpdateTaskStatus, tasks, currentUser, appendLog]
   );
 
   const toggleProjectArchive = useCallback(
@@ -2271,7 +2394,10 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
     markRenewalAsRenewed,
     deleteRenewal,
     createAdminUser,
+    createUser,
     updateUser,
+    assignUserToProjects,
+    memberships,
     changeUserPassword,
     toggleUserDisabled,
     deleteUser,

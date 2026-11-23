@@ -56,7 +56,9 @@ export default function ProjectWorkspacePage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
   const { accessibleProjects, currentUser, permissions, renewals, updateProjectStatus } = useAuth();
-  const [activeTab, setActiveTab] = useState<WorkspaceTab>('overview');
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>(() =>
+    currentUser.role === 'admin' ? 'overview' : 'board'
+  );
 
   const project = accessibleProjects.find((p) => p.id === params.id);
 
@@ -75,6 +77,7 @@ export default function ProjectWorkspacePage() {
 
   const tabs = useMemo(() => {
     const isClient = currentUser.role === 'client';
+    const isAdmin = currentUser.role === 'admin';
 
     const allTabs: Array<{
       id: WorkspaceTab;
@@ -84,9 +87,21 @@ export default function ProjectWorkspacePage() {
       badge?: string;
     }> = [
       {
+        id: 'board',
+        label: isClient ? 'Approved Deliverables' : 'Execution Kanban Board',
+        icon: Kanban,
+        visible: true,
+      },
+      {
         id: 'overview',
         label: 'Overview & Scope',
         icon: FileText,
+        visible: true,
+      },
+      {
+        id: 'assets',
+        label: 'Asset Repository',
+        icon: FolderArchive,
         visible: true,
       },
       {
@@ -99,25 +114,19 @@ export default function ProjectWorkspacePage() {
         id: 'meetings',
         label: 'Meetings',
         icon: MessageSquare,
-        visible: !isClient,
+        visible: isAdmin,
       },
       {
         id: 'talks',
         label: 'Client Talk',
         icon: MessageCircle,
-        visible: !isClient,
+        visible: isAdmin,
       },
       {
         id: 'proposals',
         label: 'Proposals',
         icon: FileSpreadsheet,
-        visible: !isClient,
-      },
-      {
-        id: 'assets',
-        label: 'Asset Repository',
-        icon: FolderArchive,
-        visible: true,
+        visible: isAdmin,
       },
       {
         id: 'vault',
@@ -129,14 +138,8 @@ export default function ProjectWorkspacePage() {
         id: 'renewals',
         label: 'Renewals',
         icon: RotateCcw,
-        visible: !isClient,
+        visible: isAdmin,
         badge: projectUpcomingRenewals > 0 ? String(projectUpcomingRenewals) : undefined,
-      },
-      {
-        id: 'board',
-        label: isClient ? 'Approved Deliverables' : 'Task Board',
-        icon: Kanban,
-        visible: true,
       },
     ];
     return allTabs.filter((t) => t.visible);
@@ -178,31 +181,47 @@ export default function ProjectWorkspacePage() {
               {project.title}
             </h1>
             <Badge variant="outline">{project.project_type}</Badge>
-            <div className="relative inline-flex items-center">
-              <select
-                value={simpleStatus}
-                onChange={(e) =>
-                  updateProjectStatus(
-                    project.id,
-                    e.target.value as ProjectStatus
-                  )
-                }
+            {currentUser.role === 'admin' ? (
+              <div className="relative inline-flex items-center">
+                <select
+                  value={simpleStatus}
+                  onChange={(e) =>
+                    updateProjectStatus(
+                      project.id,
+                      e.target.value as ProjectStatus
+                    )
+                  }
+                  className={cn(
+                    'h-6 rounded-full border px-2.5 pr-6 text-xs font-semibold cursor-pointer transition-colors appearance-none focus:outline-none focus:ring-1 focus:ring-zinc-900',
+                    simpleStatus === 'Active'
+                      ? 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
+                      : simpleStatus === 'Inactive'
+                      ? 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100'
+                      : 'border-blue-300 bg-blue-50 text-blue-800 hover:bg-blue-100'
+                  )}
+                  aria-label="Project Status"
+                >
+                  <option value="Active">● Active</option>
+                  <option value="Inactive">● Inactive</option>
+                  <option value="Completed">● Completed</option>
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-2 h-3 w-3 text-zinc-500" />
+              </div>
+            ) : (
+              <span
                 className={cn(
-                  'h-6 rounded-full border px-2.5 pr-6 text-xs font-semibold cursor-pointer transition-colors appearance-none focus:outline-none focus:ring-1 focus:ring-zinc-900',
+                  'inline-flex items-center h-6 rounded-full border px-2.5 text-xs font-semibold select-none',
                   simpleStatus === 'Active'
-                    ? 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
+                    ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
                     : simpleStatus === 'Inactive'
-                    ? 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100'
-                    : 'border-blue-300 bg-blue-50 text-blue-800 hover:bg-blue-100'
+                    ? 'border-amber-300 bg-amber-50 text-amber-800'
+                    : 'border-blue-300 bg-blue-50 text-blue-800'
                 )}
-                aria-label="Project Status"
+                title="Project status managed by Administrators"
               >
-                <option value="Active">● Active</option>
-                <option value="Inactive">● Inactive</option>
-                <option value="Completed">● Completed</option>
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-2 h-3 w-3 text-zinc-500" />
-            </div>
+                ● {simpleStatus}
+              </span>
+            )}
             {project.is_archived && simpleStatus !== 'Completed' && (
               <Badge variant="secondary">
                 <Lock className="h-3 w-3" /> Read-Only Archive

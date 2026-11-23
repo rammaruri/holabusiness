@@ -427,7 +427,7 @@ export interface RolePermissions {
 
 export const ROLE_LABELS: Record<UserRole, string> = {
   admin: 'Founder & Admin',
-  pm: 'Founder & Admin',
-  member: 'Founder & Admin',
-  client: 'Founder & Admin',
+  pm: 'Project Manager',
+  member: 'Employee',
+  client: 'Client Portal',
 };
