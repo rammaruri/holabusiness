@@ -129,6 +129,21 @@ html, body {
   }
 }
 
+/* Option 1: Dynamic Adaptive Scale Engine for 1080p/1440p desktop screens at 100% scale */
+@media screen and (min-width: 1380px) and (-webkit-max-device-pixel-ratio: 1.15),
+       screen and (min-width: 1380px) and (max-resolution: 110dpi) {
+  html {
+    zoom: 1.1;
+  }
+}
+
+@media screen and (min-width: 2200px) and (-webkit-max-device-pixel-ratio: 1.15),
+       screen and (min-width: 2200px) and (max-resolution: 110dpi) {
+  html {
+    zoom: 1.15;
+  }
+}
+
 /* Design System Utility Classes */
 .btn-primary {
   background: var(--accent);

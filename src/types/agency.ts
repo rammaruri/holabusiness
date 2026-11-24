@@ -355,6 +355,7 @@ export interface Task {
   blocked_by_task_id?: string | null;
   linked_deliverable?: string | null;
   deliverable_url?: string | null;
+  is_edited?: boolean;
   created_at: string;
   updated_at: string;
 }

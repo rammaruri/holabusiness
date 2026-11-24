@@ -25,7 +25,7 @@ async function ensureStoreTable(client: any) {
   `);
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   const client = getTursoClient();
 
   if (!client) {
@@ -38,11 +38,25 @@ export async function GET() {
   try {
     await ensureStoreTable(client);
 
+    const { searchParams } = new URL(req.url);
+    if (searchParams.get('check') === 'version') {
+      const verRes = await client.execute('SELECT MAX(updated_at) as latest_version FROM workspace_store');
+      const latest_version = verRes.rows[0]?.latest_version || null;
+      return NextResponse.json({
+        configured: true,
+        latest_version,
+      });
+    }
+
     // Fetch all keys from workspace_store
-    const res = await client.execute('SELECT key, value_json FROM workspace_store');
+    const res = await client.execute('SELECT key, value_json, updated_at FROM workspace_store');
     const store: Record<string, any> = {};
+    let latest_version: string | null = null;
 
     for (const row of res.rows) {
+      if (row.updated_at && (latest_version === null || String(row.updated_at) > latest_version)) {
+        latest_version = String(row.updated_at);
+      }
       if (typeof row.key === 'string' && typeof row.value_json === 'string') {
         try {
           store[row.key] = JSON.parse(row.value_json);
@@ -83,8 +97,49 @@ export async function GET() {
       }
     }
 
+    // Clean migration: If store.users contains dummy accounts (Elena Vance or Marcus Chen), upgrade to real founder
+    if (Array.isArray(store.users)) {
+      let needsMigration = false;
+      const cleanedUsers = store.users
+        .filter((u: any) => u.id !== 'usr-admin-2') // Remove Marcus Chen
+        .map((u: any) => {
+          if (u.id === 'usr-admin-1' && (u.email === 'elena@holabusiness.io' || u.name === 'Elena Vance')) {
+            needsMigration = true;
+            return {
+              ...u,
+              name: 'Ram Maruri',
+              email: 'ram@holabusiness.in',
+              title: 'Primary Founder & Managing Partner',
+              password: u.password === 'admin' ? 'admin123' : (u.password || 'admin123'),
+              role: 'admin',
+              is_main_admin: true,
+            };
+          }
+          return u;
+        });
+
+      if (needsMigration || cleanedUsers.length !== store.users.length) {
+        store.users = cleanedUsers;
+        try {
+          await client.execute({
+            sql: `INSERT INTO workspace_store (key, value_json, updated_at) 
+                  VALUES ('users', ?, datetime('now')) 
+                  ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at=datetime('now')`,
+            args: [JSON.stringify(cleanedUsers)],
+          });
+          await client.execute("DELETE FROM users WHERE id = 'usr-admin-2'");
+          await client.execute({
+            sql: `UPDATE users SET name = 'Ram Maruri', email = 'ram@holabusiness.in', title = 'Primary Founder & Managing Partner', password = 'admin123' WHERE id = 'usr-admin-1'`,
+          });
+        } catch (e) {
+          console.warn('User migration warning:', e);
+        }
+      }
+    }
+
     return NextResponse.json({
       configured: true,
+      latest_version,
       data: store,
     });
   } catch (err: any) {
@@ -180,6 +235,7 @@ export async function POST(req: Request) {
           const ids = value.map((u) => `'${u.id.replace(/'/g, "''")}'`).join(',');
           try {
             await client.execute(`DELETE FROM users WHERE id NOT IN (${ids}) AND is_main_admin = 0`);
+            await client.execute("DELETE FROM users WHERE id = 'usr-admin-2'");
           } catch (e) {}
         }
         for (const u of value) {
@@ -204,7 +260,12 @@ export async function POST(req: Request) {
               ],
             });
           } catch (e) {
-            // Ignore
+            try {
+              await client.execute({
+                sql: `UPDATE users SET name = ?, email = ?, role = ?, title = ?, password = ? WHERE id = ?`,
+                args: [u.name, u.email, u.role ?? 'admin', u.title ?? null, u.password ?? 'admin123', u.id],
+              });
+            } catch (e2) {}
           }
         }
       }

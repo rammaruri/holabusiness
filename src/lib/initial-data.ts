@@ -124,9 +124,9 @@ export const INITIAL_CONTACTS: ProjectContact[] = [
     id: 'cnt-biz-1',
     project_id: null,
     company_name: 'Hyperion Logistics',
-    name: 'Elena Vance',
+    name: 'Sarah Jenkins',
     role: 'Chief Marketing Officer',
-    email: 'elena.vance@hyperionlogistics.com',
+    email: 'sarah.jenkins@hyperionlogistics.com',
     phone: '+1 (312) 555-0188',
     notes: 'Met at SaaS Summit. Interested in custom fleet tracking dashboard redesign.',
     is_primary: false,
@@ -610,7 +610,7 @@ export const INITIAL_ASSETS: ProjectAsset[] = [
     file_size: 28_400_000,
     version_tag: 'v2.0',
     client_approved: true,
-    uploaded_by: 'usr-admin-2',
+    uploaded_by: 'usr-admin-1',
     created_at: '2026-10-14T16:45:00Z',
   },
   {
@@ -642,7 +642,7 @@ export const INITIAL_ASSETS: ProjectAsset[] = [
     file_size: 89_250_000,
     version_tag: 'v1.0',
     client_approved: true,
-    uploaded_by: 'usr-admin-2',
+    uploaded_by: 'usr-admin-1',
     created_at: '2026-10-25T11:00:00Z',
   },
   {
@@ -674,7 +674,7 @@ export const INITIAL_ASSETS: ProjectAsset[] = [
     file_size: 42_100_000,
     version_tag: 'v3.2',
     client_approved: true,
-    uploaded_by: 'usr-admin-2',
+    uploaded_by: 'usr-admin-1',
     created_at: '2026-09-02T16:00:00Z',
   },
   {

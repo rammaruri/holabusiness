@@ -3,23 +3,13 @@ import type { Project, Task, User } from '@/types/agency';
 export const DEMO_USERS: User[] = [
   {
     id: 'usr-admin-1',
-    name: 'Elena Vance',
-    email: 'elena@holabusiness.io',
+    name: 'Ram Maruri',
+    email: 'ram@holabusiness.in',
     role: 'admin',
     is_main_admin: true,
-    title: 'Managing Partner & Primary Founder',
-    password: 'admin',
+    title: 'Primary Founder & Managing Partner',
+    password: 'admin123',
     created_at: '2025-01-10T09:00:00Z',
-  },
-  {
-    id: 'usr-admin-2',
-    name: 'Marcus Chen',
-    email: 'marcus@holabusiness.io',
-    role: 'admin',
-    is_main_admin: false,
-    title: 'Technical Co-Founder & CTO',
-    password: 'admin',
-    created_at: '2025-02-01T09:00:00Z',
   },
 ];
 
@@ -106,13 +96,6 @@ export const INITIAL_SHELL_PROJECTS: Project[] = [
 
 export const DEMO_PROJECT_MEMBERSHIPS: Record<string, string[]> = {
   'usr-admin-1': [
-    'proj-aurora-web',
-    'proj-veridian-app',
-    'proj-kestrel-growth',
-    'proj-solaris-health',
-    'proj-vortex-cloud',
-  ],
-  'usr-admin-2': [
     'proj-aurora-web',
     'proj-veridian-app',
     'proj-kestrel-growth',

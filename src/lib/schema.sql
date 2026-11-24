@@ -182,7 +182,4 @@ CREATE TABLE IF NOT EXISTS activity_logs (
 
 -- Seed Initial Main Admin
 INSERT OR IGNORE INTO users (id, name, email, role, is_main_admin, password, title)
-VALUES ('usr-admin-1', 'Elena Vance', 'elena@holabusiness.io', 'admin', 1, 'admin123', 'Managing Partner & Primary Founder');
-
-INSERT OR IGNORE INTO users (id, name, email, role, is_main_admin, password, title)
-VALUES ('usr-admin-2', 'Marcus Chen', 'marcus@holabusiness.io', 'admin', 0, 'admin123', 'Technical Co-Founder & CTO');
+VALUES ('usr-admin-1', 'Ram Maruri', 'ram@holabusiness.in', 'admin', 1, 'admin123', 'Primary Founder & Managing Partner');

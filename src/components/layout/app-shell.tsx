@@ -21,6 +21,7 @@ import {
   LogOut,
   Megaphone,
   Menu,
+  Monitor,
   Plus,
   RotateCcw,
   Search,
@@ -73,6 +74,84 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const switcherRef = useRef<HTMLDivElement>(null);
   const notificationsRef = useRef<HTMLDivElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
+
+  const [zoomSetting, setZoomSetting] = useState<'auto' | '100' | '110' | '120'>('auto');
+  const [activeZoomRatio, setActiveZoomRatio] = useState<string>('100%');
+
+  // Handle Option 1: Dynamic Adaptive Scale Engine
+  useEffect(() => {
+    const saved = (localStorage.getItem('holabusiness_display_zoom') as 'auto' | '100' | '110' | '120') || 'auto';
+    setZoomSetting(saved);
+
+    const applyZoom = (level: 'auto' | '100' | '110' | '120') => {
+      if (typeof window === 'undefined') return;
+
+      if (level === '100') {
+        document.documentElement.style.zoom = '1.0';
+        setActiveZoomRatio('100%');
+      } else if (level === '110') {
+        document.documentElement.style.zoom = '1.1';
+        setActiveZoomRatio('110%');
+      } else if (level === '120') {
+        document.documentElement.style.zoom = '1.2';
+        setActiveZoomRatio('120%');
+      } else {
+        // Auto: detect standard 100% desktop DPI (devicePixelRatio <= 1.15) and wide viewport (innerWidth >= 1380px)
+        const dpr = window.devicePixelRatio || 1;
+        const width = window.innerWidth;
+        if (dpr <= 1.15 && width >= 1380) {
+          document.documentElement.style.zoom = '1.1';
+          setActiveZoomRatio('110% (Auto)');
+        } else if (width >= 2200) {
+          document.documentElement.style.zoom = '1.15';
+          setActiveZoomRatio('115% (Auto)');
+        } else {
+          document.documentElement.style.zoom = '';
+          setActiveZoomRatio(`${Math.round(dpr * 100)}% (Native)`);
+        }
+      }
+    };
+
+    applyZoom(saved);
+
+    const handleResize = () => {
+      const current = (localStorage.getItem('holabusiness_display_zoom') as 'auto' | '100' | '110' | '120') || 'auto';
+      if (current === 'auto') {
+        applyZoom('auto');
+      }
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const handleZoomChange = (level: 'auto' | '100' | '110' | '120') => {
+    setZoomSetting(level);
+    localStorage.setItem('holabusiness_display_zoom', level);
+    if (level === '100') {
+      document.documentElement.style.zoom = '1.0';
+      setActiveZoomRatio('100%');
+    } else if (level === '110') {
+      document.documentElement.style.zoom = '1.1';
+      setActiveZoomRatio('110%');
+    } else if (level === '120') {
+      document.documentElement.style.zoom = '1.2';
+      setActiveZoomRatio('120%');
+    } else {
+      const dpr = window.devicePixelRatio || 1;
+      const width = window.innerWidth;
+      if (dpr <= 1.15 && width >= 1380) {
+        document.documentElement.style.zoom = '1.1';
+        setActiveZoomRatio('110% (Auto)');
+      } else if (width >= 2200) {
+        document.documentElement.style.zoom = '1.15';
+        setActiveZoomRatio('115% (Auto)');
+      } else {
+        document.documentElement.style.zoom = '';
+        setActiveZoomRatio(`${Math.round(dpr * 100)}% (Native)`);
+      }
+    }
+  };
 
   // Close floating menus when clicking outside
   useEffect(() => {
@@ -134,7 +213,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const activeProjectId = pathname.startsWith('/projects/')
     ? pathname.split('/')[2]
     : null;
-  const activeProject = accessibleProjects.find((p) => p.id === activeProjectId);
+  const activeProject = accessibleProjects.find(
+    (p) =>
+      p.id === activeProjectId ||
+      p.id.toLowerCase() === activeProjectId?.toLowerCase() ||
+      p.id.replace(/^proj-/, '').toLowerCase() === activeProjectId?.toLowerCase() ||
+      p.title.toLowerCase().replace(/[^a-z0-9]+/g, '-') === activeProjectId?.toLowerCase()
+  );
 
   const activeProjects = useMemo(() => {
     return accessibleProjects.filter((p) => getProjectSimpleStatus(p) === 'Active');
@@ -619,6 +704,33 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                         <span>Manage Team &amp; Access</span>
                       </Link>
                     )}
+
+                    {/* Display Zoom Adaptive Control */}
+                    <div className="pt-2 pb-1 border-t border-[#e5e7eb] px-1 my-1">
+                      <div className="flex items-center justify-between text-[11px] font-medium text-[#6b7280] mb-1.5 px-1.5">
+                        <span className="flex items-center gap-1.5">
+                          <Monitor className="h-3.5 w-3.5 text-[#4361ee]" /> Display Scale
+                        </span>
+                        <span className="text-[10px] text-[#4361ee] font-semibold">{activeZoomRatio}</span>
+                      </div>
+                      <div className="grid grid-cols-4 gap-1">
+                        {(['auto', '100', '110', '120'] as const).map((z) => (
+                          <button
+                            key={z}
+                            type="button"
+                            onClick={() => handleZoomChange(z)}
+                            className={cn(
+                              "py-1 rounded-[6px] text-[10.5px] font-medium transition-all text-center cursor-pointer",
+                              zoomSetting === z
+                                ? "bg-[#4361ee] text-white shadow-[0_1px_4px_rgba(67,97,238,0.3)] font-semibold"
+                                : "bg-[#f3f4f6] text-[#4b5563] hover:bg-[#e5e7eb] hover:text-[#111827]"
+                            )}
+                          >
+                            {z === 'auto' ? 'Auto' : `${z}%`}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
 
                     <button
                       type="button"

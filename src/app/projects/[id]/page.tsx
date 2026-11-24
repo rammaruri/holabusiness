@@ -60,7 +60,13 @@ export default function ProjectWorkspacePage() {
     currentUser.role === 'admin' ? 'overview' : 'board'
   );
 
-  const project = accessibleProjects.find((p) => p.id === params.id);
+  const project = accessibleProjects.find(
+    (p) =>
+      p.id === params.id ||
+      p.id.toLowerCase() === params.id.toLowerCase() ||
+      p.id.replace(/^proj-/, '').toLowerCase() === params.id.toLowerCase() ||
+      p.title.toLowerCase().replace(/[^a-z0-9]+/g, '-') === params.id.toLowerCase()
+  );
 
   const projectUpcomingRenewals = useMemo(() => {
     if (!project) return 0;
@@ -171,7 +177,7 @@ export default function ProjectWorkspacePage() {
   const simpleStatus = getProjectSimpleStatus(project);
 
   return (
-    <div className="mx-auto max-w-7xl space-y-5">
+    <div className="mx-auto max-w-7xl 2xl:max-w-[1500px] space-y-5">
       {/* Project Header */}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
