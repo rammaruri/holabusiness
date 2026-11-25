@@ -70,6 +70,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [envBadge, setEnvBadge] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const host = window.location.hostname;
+      if (host.includes('staging') || process.env.NEXT_PUBLIC_APP_ENV === 'staging') {
+        setEnvBadge('staging');
+      } else if (host === 'localhost' || host === '127.0.0.1' || process.env.NEXT_PUBLIC_APP_ENV === 'development') {
+        setEnvBadge('development');
+      }
+    }
+  }, []);
 
   const switcherRef = useRef<HTMLDivElement>(null);
   const notificationsRef = useRef<HTMLDivElement>(null);
@@ -333,12 +345,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </span>
           </div>
         </Link>
-        {process.env.NEXT_PUBLIC_APP_ENV === 'staging' && (
+        {envBadge === 'staging' && (
           <span className="rounded-[4px] bg-amber-100 px-1.5 py-0.5 text-[9.5px] font-bold tracking-wider text-amber-800 uppercase border border-amber-300">
             Staging
           </span>
         )}
-        {process.env.NEXT_PUBLIC_APP_ENV === 'development' && (
+        {envBadge === 'development' && (
           <span className="rounded-[4px] bg-blue-50 px-1.5 py-0.5 text-[9.5px] font-bold tracking-wider text-[#4361ee] uppercase border border-blue-200">
             Dev
           </span>
