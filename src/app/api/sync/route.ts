@@ -137,11 +137,18 @@ export async function GET(req: Request) {
       }
     }
 
-    return NextResponse.json({
-      configured: true,
-      latest_version,
-      data: store,
-    });
+    return NextResponse.json(
+      {
+        configured: true,
+        latest_version,
+        data: store,
+      },
+      {
+        headers: {
+          'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+        },
+      }
+    );
   } catch (err: any) {
     console.error('Error in GET /api/sync:', err);
     return NextResponse.json(

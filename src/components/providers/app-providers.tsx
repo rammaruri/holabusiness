@@ -394,6 +394,16 @@ function getInitialStorage<T>(key: string, fallback: T): T {
   return fallback;
 }
 
+/** Fire-and-forget instant cloud push for any set of keys. */
+function instantSync(updates: Record<string, unknown>) {
+  if (typeof window === 'undefined') return;
+  fetch('/api/sync', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ updates }),
+  }).catch((e) => console.warn('Instant cloud sync error:', e));
+}
+
 export function AppProviders({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
     () =>
@@ -523,12 +533,17 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
                 return u;
               });
 
-            // Smart Merge: Don't lose locally added users that haven't synced to cloud yet!
+            // Smart Merge: Rescue locally added users created AFTER the last cloud write (never resurrect deleted users)
+            const cloudVersion = result.latest_version ? String(result.latest_version) : '';
             const localUsers = getInitialStorage<User[]>('holabusiness_users', []);
             const userMap = new Map<string, User>();
             cleanUsers.forEach((u: User) => userMap.set(u.id, u));
             localUsers.forEach((u: User) => {
-              if (u.id !== 'usr-admin-2' && !userMap.has(u.id)) {
+              if (
+                u.id !== 'usr-admin-2' &&
+                !userMap.has(u.id) &&
+                (!cloudVersion || (u.created_at && u.created_at > cloudVersion))
+              ) {
                 userMap.set(u.id, u);
               }
             });
@@ -537,20 +552,27 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
             setUsers(mergedUsers);
             if (typeof window !== 'undefined') localStorage.setItem('holabusiness_users', JSON.stringify(mergedUsers));
 
-            // If local storage had extra users not in cloud yet, sync them up immediately!
+            // If local storage had extra newly-created users not in cloud yet, sync them up immediately
             if (mergedUsers.length > cleanUsers.length) {
-              fetch('/api/sync', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  updates: { users: mergedUsers },
-                }),
-              }).catch(() => {});
+              instantSync({ users: mergedUsers });
             }
           }
           if (Array.isArray(d.projects)) {
-            setProjects(d.projects);
-            if (typeof window !== 'undefined') localStorage.setItem('holabusiness_projects', JSON.stringify(d.projects));
+            const cloudVersion = result.latest_version ? String(result.latest_version) : '';
+            const localProjects = getInitialStorage<Project[]>('holabusiness_projects', []);
+            const projMap = new Map<string, Project>();
+            d.projects.forEach((p: Project) => projMap.set(p.id, p));
+            localProjects.forEach((p: Project) => {
+              if (!projMap.has(p.id) && (!cloudVersion || (p.created_at && p.created_at > cloudVersion))) {
+                projMap.set(p.id, p);
+              }
+            });
+            const mergedProjects = Array.from(projMap.values());
+            setProjects(mergedProjects);
+            if (typeof window !== 'undefined') localStorage.setItem('holabusiness_projects', JSON.stringify(mergedProjects));
+            if (mergedProjects.length > d.projects.length) {
+              instantSync({ projects: mergedProjects });
+            }
           }
           if (Array.isArray(d.contacts)) {
             setContacts(d.contacts);
@@ -585,8 +607,21 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
             if (typeof window !== 'undefined') localStorage.setItem('holabusiness_credentials', JSON.stringify(d.credentials));
           }
           if (Array.isArray(d.tasks)) {
-            setTasks(d.tasks);
-            if (typeof window !== 'undefined') localStorage.setItem('holabusiness_tasks', JSON.stringify(d.tasks));
+            const cloudVersion = result.latest_version ? String(result.latest_version) : '';
+            const localTasks = getInitialStorage<Task[]>('holabusiness_tasks', []);
+            const taskMap = new Map<string, Task>();
+            d.tasks.forEach((t: Task) => taskMap.set(t.id, t));
+            localTasks.forEach((t: Task) => {
+              if (!taskMap.has(t.id) && (!cloudVersion || (t.created_at && t.created_at > cloudVersion))) {
+                taskMap.set(t.id, t);
+              }
+            });
+            const mergedTasks = Array.from(taskMap.values());
+            setTasks(mergedTasks);
+            if (typeof window !== 'undefined') localStorage.setItem('holabusiness_tasks', JSON.stringify(mergedTasks));
+            if (mergedTasks.length > d.tasks.length) {
+              instantSync({ tasks: mergedTasks });
+            }
           }
           if (Array.isArray(d.renewals)) {
             setRenewals(d.renewals);
@@ -950,16 +985,19 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
 
   const assignUserToProjects = useCallback(
     (userId: string, projectIds: string[]) => {
+      let nextMemberships: Record<string, string[]> = {};
       setMemberships((prev) => {
         const updated = {
           ...prev,
           [userId]: projectIds,
         };
+        nextMemberships = updated;
         if (typeof window !== 'undefined') {
-          localStorage.setItem('holabusiness_memberships', JSON.stringify(updated));
+          try { localStorage.setItem('holabusiness_memberships', JSON.stringify(updated)); } catch {}
         }
         return updated;
       });
+      instantSync({ memberships: nextMemberships });
     },
     []
   );
@@ -1212,16 +1250,32 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         const next = [newProject, ...prev];
         nextProjects = next;
         if (typeof window !== 'undefined') {
-          localStorage.setItem('holabusiness_projects', JSON.stringify(next));
+          try { localStorage.setItem('holabusiness_projects', JSON.stringify(next)); } catch {}
         }
         return next;
       });
+      let nextReqs: ProjectRequirement[] = [];
       setRequirements((prev) => {
-        const nextReqs = [newReq, ...prev];
+        const next = [newReq, ...prev];
+        nextReqs = next;
         if (typeof window !== 'undefined') {
-          localStorage.setItem('holabusiness_requirements', JSON.stringify(nextReqs));
+          try { localStorage.setItem('holabusiness_requirements', JSON.stringify(next)); } catch {}
         }
-        return nextReqs;
+        return next;
+      });
+      let nextMemberships: Record<string, string[]> = {};
+      setMemberships((prev) => {
+        const next = { ...prev };
+        users.forEach((u) => {
+          if (u.role !== 'client') {
+            next[u.id] = Array.from(new Set([...(next[u.id] ?? []), projectId]));
+          }
+        });
+        nextMemberships = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_memberships', JSON.stringify(next)); } catch {}
+        }
+        return next;
       });
 
       if (typeof window !== 'undefined' && nextProjects.length > 0) {
@@ -1233,7 +1287,8 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
           body: JSON.stringify({
             updates: {
               projects: nextProjects,
-              requirements: [newReq, ...requirements],
+              requirements: nextReqs,
+              memberships: nextMemberships,
             },
           }),
         }).catch((e) => console.warn('Project create sync error:', e));
@@ -1246,15 +1301,6 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
           });
         } catch {}
       }
-      setMemberships((prev) => {
-        const next = { ...prev };
-        DEMO_USERS.forEach((u) => {
-          if (u.role !== 'client') {
-            next[u.id] = Array.from(new Set([...(next[u.id] ?? []), projectId]));
-          }
-        });
-        return next;
-      });
 
       appendLog(
         projectId,
@@ -1271,7 +1317,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
 
       return newProject;
     },
-    [permissions.canCreateProject, currentUser.id, projects, appendLog]
+    [permissions.canCreateProject, currentUser.id, projects, users, appendLog]
   );
 
   // 2. Contacts Management (Multiple contacts per project or unlinked business contacts)
@@ -1292,7 +1338,16 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         created_at: new Date().toISOString(),
       };
 
-      setContacts((prev) => [newContact, ...prev]);
+      let nextContacts: ProjectContact[] = [];
+      setContacts((prev) => {
+        const next = [newContact, ...prev];
+        nextContacts = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_contacts', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
+      instantSync({ contacts: nextContacts.length > 0 ? nextContacts : [newContact] });
       if (input.project_id) {
         appendLog(
           input.project_id,
@@ -1310,15 +1365,31 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
 
   const updateContact = useCallback(
     (contactId: string, updates: Partial<ProjectContact>) => {
-      setContacts((prev) =>
-        prev.map((c) => (c.id === contactId ? { ...c, ...updates } : c))
-      );
+      let nextContacts: ProjectContact[] = [];
+      setContacts((prev) => {
+        const next = prev.map((c) => (c.id === contactId ? { ...c, ...updates } : c));
+        nextContacts = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_contacts', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
+      instantSync({ contacts: nextContacts });
     },
     []
   );
 
   const deleteContact = useCallback((contactId: string) => {
-    setContacts((prev) => prev.filter((c) => c.id !== contactId));
+    let nextContacts: ProjectContact[] = [];
+    setContacts((prev) => {
+      const next = prev.filter((c) => c.id !== contactId);
+      nextContacts = next;
+      if (typeof window !== 'undefined') {
+        try { localStorage.setItem('holabusiness_contacts', JSON.stringify(next)); } catch {}
+      }
+      return next;
+    });
+    instantSync({ contacts: nextContacts });
   }, []);
 
   // 3. Meetings & Structured Pre-Sales Outcomes
@@ -1341,7 +1412,15 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         created_at: now,
       };
 
-      setMeetings((prev) => [newMeeting, ...prev]);
+      let nextMeetings: ProjectMeeting[] = [];
+      setMeetings((prev) => {
+        const next = [newMeeting, ...prev];
+        nextMeetings = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_meetings', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
       if (!input.is_general_session) {
         setProjects((prev) =>
           prev.map((p) =>
@@ -1351,6 +1430,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
           )
         );
       }
+      instantSync({ meetings: nextMeetings });
 
       appendLog(
         input.project_id,
@@ -1370,16 +1450,32 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
 
   const updateMeeting = useCallback(
     (meetingId: string, updates: Partial<ProjectMeeting>) => {
-      setMeetings((prev) =>
-        prev.map((m) => (m.id === meetingId ? { ...m, ...updates } : m))
-      );
+      let nextMeetings: ProjectMeeting[] = [];
+      setMeetings((prev) => {
+        const next = prev.map((m) => (m.id === meetingId ? { ...m, ...updates } : m));
+        nextMeetings = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_meetings', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
+      instantSync({ meetings: nextMeetings });
     },
     []
   );
 
   const deleteMeeting = useCallback(
     (meetingId: string) => {
-      setMeetings((prev) => prev.filter((m) => m.id !== meetingId));
+      let nextMeetings: ProjectMeeting[] = [];
+      setMeetings((prev) => {
+        const next = prev.filter((m) => m.id !== meetingId);
+        nextMeetings = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_meetings', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
+      instantSync({ meetings: nextMeetings });
     },
     []
   );
@@ -1392,8 +1488,9 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       const now = new Date().toISOString();
       const outcomeAt = input.outcome_at || now;
 
-      setMeetings((prev) =>
-        prev.map((m) =>
+      let nextMeetings2: ProjectMeeting[] = [];
+      setMeetings((prev) => {
+        const next = prev.map((m) =>
           m.id === input.meeting_id
             ? {
                 ...m,
@@ -1405,16 +1502,22 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
                 decision_edited_at: input.is_edit ? now : m.decision_edited_at,
               }
             : m
-        )
-      );
+        );
+        nextMeetings2 = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_meetings', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
 
       // Transition project status according to outcome specification:
       // Approved -> advances to 'Proposal Review'
       // Denied -> moves to 'Draft / On Hold' with note
       // Rescheduled -> remains 'Meeting Scheduled'
       // Remainder -> moves to 'Draft / On Hold' with remainder reminder date
-      setProjects((prev) =>
-        prev.map((p) => {
+      let nextProjects2: Project[] = [];
+      setProjects((prev) => {
+        const next: Project[] = prev.map((p) => {
           if (p.id !== existing.project_id) return p;
 
           if (input.outcome === 'approved') {
@@ -1449,8 +1552,14 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
             };
           }
           return p;
-        })
-      );
+        });
+        nextProjects2 = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_projects', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
+      instantSync({ meetings: nextMeetings2, projects: nextProjects2 });
 
       appendLog(
         existing.project_id,
@@ -1492,7 +1601,16 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         created_at: now,
       };
 
-      setClientTalks((prev) => [newTalk, ...prev]);
+      let nextClientTalks: ClientTalkRecord[] = [];
+      setClientTalks((prev) => {
+        const next = [newTalk, ...prev];
+        nextClientTalks = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_client_talks', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
+      instantSync({ clientTalks: nextClientTalks });
       appendLog(
         input.project_id,
         'CLIENT_TALK_LOGGED',
@@ -1511,9 +1629,16 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
   const updateClientTalk = useCallback(
     (talkId: string, updates: Partial<ClientTalkRecord>) => {
       const now = new Date().toISOString();
-      setClientTalks((prev) =>
-        prev.map((t) => (t.id === talkId ? { ...t, ...updates, updated_at: now } : t))
-      );
+      let nextClientTalks: ClientTalkRecord[] = [];
+      setClientTalks((prev) => {
+        const next = prev.map((t) => (t.id === talkId ? { ...t, ...updates, updated_at: now } : t));
+        nextClientTalks = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_client_talks', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
+      instantSync({ clientTalks: nextClientTalks });
       const existing = clientTalks.find((t) => t.id === talkId);
       if (existing) {
         appendLog(
@@ -1532,7 +1657,16 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
   const deleteClientTalk = useCallback(
     (talkId: string) => {
       const existing = clientTalks.find((t) => t.id === talkId);
-      setClientTalks((prev) => prev.filter((t) => t.id !== talkId));
+      let nextClientTalks: ClientTalkRecord[] = [];
+      setClientTalks((prev) => {
+        const next = prev.filter((t) => t.id !== talkId);
+        nextClientTalks = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_client_talks', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
+      instantSync({ clientTalks: nextClientTalks });
       if (existing) {
         appendLog(
           existing.project_id,
@@ -1591,7 +1725,15 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         updated_at: now,
       };
 
-      setProposals((prev) => [newProposal, ...prev]);
+      let nextProposals: ProjectProposal[] = [];
+      setProposals((prev) => {
+        const next = [newProposal, ...prev];
+        nextProposals = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_proposals', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
 
       // Auto-register proposal into the Documents repository as mandatory
       const safeTitle = input.title.toLowerCase().replace(/[^a-z0-9]+/g, '_');
@@ -1609,7 +1751,16 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         uploaded_by: currentUser.id,
         created_at: now,
       };
-      setDocuments((prev) => [autoDoc, ...prev]);
+      let nextDocs: ProjectDocument[] = [];
+      setDocuments((prev) => {
+        const next = [autoDoc, ...prev];
+        nextDocs = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_documents', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
+      instantSync({ proposals: nextProposals, documents: nextDocs });
 
       appendLog(
         input.project_id,
@@ -1627,20 +1778,36 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
 
   const updateProposal = useCallback(
     (proposalId: string, updates: Partial<ProjectProposal>) => {
-      setProposals((prev) =>
-        prev.map((p) =>
+      let nextProposals: ProjectProposal[] = [];
+      setProposals((prev) => {
+        const next = prev.map((p) =>
           p.id === proposalId
             ? { ...p, ...updates, updated_at: new Date().toISOString() }
             : p
-        )
-      );
+        );
+        nextProposals = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_proposals', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
+      instantSync({ proposals: nextProposals });
     },
     []
   );
 
   const deleteProposal = useCallback(
     (proposalId: string) => {
-      setProposals((prev) => prev.filter((p) => p.id !== proposalId));
+      let nextProposals: ProjectProposal[] = [];
+      setProposals((prev) => {
+        const next = prev.filter((p) => p.id !== proposalId);
+        nextProposals = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_proposals', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
+      instantSync({ proposals: nextProposals });
     },
     []
   );
@@ -1653,8 +1820,9 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       const now = new Date().toISOString();
       const outcomeAt = input.outcome_at || now;
 
-      setProposals((prev) =>
-        prev.map((p) =>
+      let nextProposals: ProjectProposal[] = [];
+      setProposals((prev) => {
+        const next = prev.map((p) =>
           p.id === input.proposal_id
             ? {
                 ...p,
@@ -1665,15 +1833,21 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
                 updated_at: now,
               }
             : p
-        )
-      );
+        );
+        nextProposals = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_proposals', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
 
       // Proposal Outcome Routing:
       // Approved -> enters main execution section ('In Execution' or 'Intake')
       // Denied -> moves to 'Draft / On Hold' with reason note
       // Remainder -> moves to 'Draft / On Hold' with remainder follow-up date
-      setProjects((prev) =>
-        prev.map((p) => {
+      let nextProjects: Project[] = [];
+      setProjects((prev) => {
+        const next: Project[] = prev.map((p) => {
           if (p.id !== existing.project_id) return p;
 
           if (input.outcome === 'approved') {
@@ -1703,8 +1877,14 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
             };
           }
           return p;
-        })
-      );
+        });
+        nextProjects = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_projects', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
+      instantSync({ proposals: nextProposals, projects: nextProjects });
 
       appendLog(
         existing.project_id,
@@ -1732,8 +1912,9 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       note?: string
     ) => {
       const now = new Date().toISOString();
-      setProjects((prev) =>
-        prev.map((p) =>
+      let nextProjects: Project[] = [];
+      setProjects((prev) => {
+        const next = prev.map((p) =>
           p.id === projectId
             ? {
                 ...p,
@@ -1744,8 +1925,14 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
                 updated_at: now,
               }
             : p
-        )
-      );
+        );
+        nextProjects = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_projects', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
+      instantSync({ projects: nextProjects });
 
       appendLog(
         projectId,
@@ -1768,8 +1955,9 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       }
       const now = new Date().toISOString();
       const isCompleted = newStatus === 'Completed' || newStatus === 'Completed/Archived';
-      setProjects((prev) =>
-        prev.map((p) =>
+      let nextProjects: Project[] = [];
+      setProjects((prev) => {
+        const next = prev.map((p) =>
           p.id === projectId
             ? {
                 ...p,
@@ -1779,8 +1967,14 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
                 updated_at: now,
               }
             : p
-        )
-      );
+        );
+        nextProjects = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_projects', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
+      instantSync({ projects: nextProjects });
 
       appendLog(
         projectId,
@@ -1796,30 +1990,118 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
 
   const deleteProject = useCallback(
     (projectId: string) => {
+      let nextProjects: Project[] = [];
+      let nextTasks: Task[] = [];
+      let nextClientTalks: ClientTalkRecord[] = [];
+      let nextMeetings: ProjectMeeting[] = [];
+      let nextProposals: ProjectProposal[] = [];
+      let nextAssets: ProjectAsset[] = [];
+      let nextCredentials: ProjectCredential[] = [];
+      let nextRenewals: RenewalItem[] = [];
+      let nextRequirements: ProjectRequirement[] = [];
+      let nextDocuments: ProjectDocument[] = [];
+      let nextLogs: ActivityLog[] = [];
+      let nextContacts: ProjectContact[] = [];
+
       setProjects((prev) => {
-        const next = prev.filter((p) => p.id !== projectId);
+        nextProjects = prev.filter((p) => p.id !== projectId);
         if (typeof window !== 'undefined') {
-          localStorage.setItem('holabusiness_projects', JSON.stringify(next));
+          try { localStorage.setItem('holabusiness_projects', JSON.stringify(nextProjects)); } catch {}
         }
-        return next;
+        return nextProjects;
       });
       setTasks((prev) => {
-        const next = prev.filter((t) => t.project_id !== projectId);
+        nextTasks = prev.filter((t) => t.project_id !== projectId);
         if (typeof window !== 'undefined') {
-          localStorage.setItem('holabusiness_tasks', JSON.stringify(next));
+          try { localStorage.setItem('holabusiness_tasks', JSON.stringify(nextTasks)); } catch {}
         }
-        return next;
+        return nextTasks;
       });
-      setClientTalks((prev) => prev.filter((t) => t.project_id !== projectId));
-      setMeetings((prev) => prev.filter((m) => m.project_id !== projectId));
-      setProposals((prev) => prev.filter((p) => p.project_id !== projectId));
-      setAssets((prev) => prev.filter((a) => a.project_id !== projectId));
-      setCredentials((prev) => prev.filter((c) => c.project_id !== projectId));
-      setRenewals((prev) => prev.filter((r) => r.project_id !== projectId));
-      setRequirements((prev) => prev.filter((r) => r.project_id !== projectId));
-      setDocuments((prev) => prev.filter((d) => d.project_id !== projectId));
-      setActivityLogs((prev) => prev.filter((l) => l.project_id !== projectId));
-      setContacts((prev) => prev.filter((c) => c.project_id !== projectId));
+      setClientTalks((prev) => {
+        nextClientTalks = prev.filter((t) => t.project_id !== projectId);
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_client_talks', JSON.stringify(nextClientTalks)); } catch {}
+        }
+        return nextClientTalks;
+      });
+      setMeetings((prev) => {
+        nextMeetings = prev.filter((m) => m.project_id !== projectId);
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_meetings', JSON.stringify(nextMeetings)); } catch {}
+        }
+        return nextMeetings;
+      });
+      setProposals((prev) => {
+        nextProposals = prev.filter((p) => p.project_id !== projectId);
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_proposals', JSON.stringify(nextProposals)); } catch {}
+        }
+        return nextProposals;
+      });
+      setAssets((prev) => {
+        nextAssets = prev.filter((a) => a.project_id !== projectId);
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_assets', JSON.stringify(nextAssets)); } catch {}
+        }
+        return nextAssets;
+      });
+      setCredentials((prev) => {
+        nextCredentials = prev.filter((c) => c.project_id !== projectId);
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_credentials', JSON.stringify(nextCredentials)); } catch {}
+        }
+        return nextCredentials;
+      });
+      setRenewals((prev) => {
+        nextRenewals = prev.filter((r) => r.project_id !== projectId);
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_renewals', JSON.stringify(nextRenewals)); } catch {}
+        }
+        return nextRenewals;
+      });
+      setRequirements((prev) => {
+        nextRequirements = prev.filter((r) => r.project_id !== projectId);
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_requirements', JSON.stringify(nextRequirements)); } catch {}
+        }
+        return nextRequirements;
+      });
+      setDocuments((prev) => {
+        nextDocuments = prev.filter((d) => d.project_id !== projectId);
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_documents', JSON.stringify(nextDocuments)); } catch {}
+        }
+        return nextDocuments;
+      });
+      setActivityLogs((prev) => {
+        nextLogs = prev.filter((l) => l.project_id !== projectId);
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_activity_logs', JSON.stringify(nextLogs)); } catch {}
+        }
+        return nextLogs;
+      });
+      setContacts((prev) => {
+        nextContacts = prev.filter((c) => c.project_id !== projectId);
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_contacts', JSON.stringify(nextContacts)); } catch {}
+        }
+        return nextContacts;
+      });
+
+      instantSync({
+        projects: nextProjects,
+        tasks: nextTasks,
+        clientTalks: nextClientTalks,
+        meetings: nextMeetings,
+        proposals: nextProposals,
+        assets: nextAssets,
+        credentials: nextCredentials,
+        renewals: nextRenewals,
+        requirements: nextRequirements,
+        documents: nextDocuments,
+        activityLogs: nextLogs,
+        contacts: nextContacts,
+      });
 
       appendLog(
         projectId,
@@ -1851,7 +2133,16 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         created_at: new Date().toISOString(),
       };
 
-      setDocuments((prev) => [newDoc, ...prev]);
+      let nextDocs: ProjectDocument[] = [];
+      setDocuments((prev) => {
+        const next = [newDoc, ...prev];
+        nextDocs = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_documents', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
+      instantSync({ documents: nextDocs });
       appendLog(
         input.project_id,
         'DOCUMENT_UPLOADED',
@@ -1871,9 +2162,16 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       if (!target) return;
       const nextSign = !target.is_signed_off;
 
-      setDocuments((prev) =>
-        prev.map((d) => (d.id === docId ? { ...d, is_signed_off: nextSign } : d))
-      );
+      let nextDocs: ProjectDocument[] = [];
+      setDocuments((prev) => {
+        const next = prev.map((d) => (d.id === docId ? { ...d, is_signed_off: nextSign } : d));
+        nextDocs = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_documents', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
+      instantSync({ documents: nextDocs });
 
       appendLog(
         target.project_id,
@@ -1904,8 +2202,9 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       const prevReq = requirements.find((r) => r.project_id === projectId);
       const now = new Date().toISOString();
 
-      setRequirements((prev) =>
-        prev.map((r) =>
+      let nextReqs: ProjectRequirement[] = [];
+      setRequirements((prev) => {
+        const next = prev.map((r) =>
           r.project_id === projectId
             ? {
                 ...r,
@@ -1916,8 +2215,14 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
                 updated_at: now,
               }
             : r
-        )
-      );
+        );
+        nextReqs = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_requirements', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
+      instantSync({ requirements: nextReqs });
 
       appendLog(
         projectId,
@@ -1953,7 +2258,16 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         updated_at: now,
       };
 
-      setAssets((prev) => [newAsset, ...prev]);
+      let nextAssets: ProjectAsset[] = [];
+      setAssets((prev) => {
+        const next = [newAsset, ...prev];
+        nextAssets = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_assets', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
+      instantSync({ assets: nextAssets });
       appendLog(
         input.project_id,
         'ASSET_UPLOADED',
@@ -1973,8 +2287,9 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       if (!target) return;
       const now = new Date().toISOString();
 
-      setAssets((prev) =>
-        prev.map((a) =>
+      let nextAssets: ProjectAsset[] = [];
+      setAssets((prev) => {
+        const next = prev.map((a) =>
           a.id === input.asset_id
             ? {
                 ...a,
@@ -1987,8 +2302,14 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
                 updated_at: now,
               }
             : a
-        )
-      );
+        );
+        nextAssets = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_assets', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
+      instantSync({ assets: nextAssets });
 
       appendLog(
         target.project_id,
@@ -2007,7 +2328,16 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       const target = assets.find((a) => a.id === assetId);
       if (!target) return;
 
-      setAssets((prev) => prev.filter((a) => a.id !== assetId));
+      let nextAssets: ProjectAsset[] = [];
+      setAssets((prev) => {
+        const next = prev.filter((a) => a.id !== assetId);
+        nextAssets = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_assets', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
+      instantSync({ assets: nextAssets });
       appendLog(
         target.project_id,
         'ASSET_DELETED',
@@ -2049,7 +2379,16 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         created_at: new Date().toISOString(),
       };
 
-      setAssets((prev) => [newAsset, ...prev]);
+      let nextAssets: ProjectAsset[] = [];
+      setAssets((prev) => {
+        const next = [newAsset, ...prev];
+        nextAssets = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_assets', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
+      instantSync({ assets: nextAssets });
       appendLog(
         input.project_id,
         'ASSET_UPLOADED',
@@ -2075,11 +2414,18 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       if (!target) return;
       const nextApproved = !target.client_approved;
 
-      setAssets((prev) =>
-        prev.map((a) =>
+      let nextAssets: ProjectAsset[] = [];
+      setAssets((prev) => {
+        const next = prev.map((a) =>
           a.id === assetId ? { ...a, client_approved: nextApproved } : a
-        )
-      );
+        );
+        nextAssets = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_assets', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
+      instantSync({ assets: nextAssets });
 
       appendLog(
         projectId,
@@ -2127,7 +2473,16 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         updated_at: new Date().toISOString(),
       };
 
-      setCredentials((prev) => [newCred, ...prev]);
+      let nextCreds: ProjectCredential[] = [];
+      setCredentials((prev) => {
+        const next = [newCred, ...prev];
+        nextCreds = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_credentials', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
+      instantSync({ credentials: nextCreds });
       appendLog(
         input.project_id,
         'CREDENTIAL_ADDED',
@@ -2211,8 +2566,9 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         auth_tag = encryptedData.auth_tag;
       }
 
-      setCredentials((prev) =>
-        prev.map((c) =>
+      let nextCreds: ProjectCredential[] = [];
+      setCredentials((prev) => {
+        const next = prev.map((c) =>
           c.id === input.credential_id
             ? {
                 ...c,
@@ -2228,8 +2584,14 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
                 updated_at: new Date().toISOString(),
               }
             : c
-        )
-      );
+        );
+        nextCreds = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_credentials', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
+      instantSync({ credentials: nextCreds });
 
       appendLog(
         input.project_id,
@@ -2252,7 +2614,16 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       const existing = credentials.find(
         (c) => c.id === credentialId && c.project_id === projectId
       );
-      setCredentials((prev) => prev.filter((c) => c.id !== credentialId));
+      let nextCreds: ProjectCredential[] = [];
+      setCredentials((prev) => {
+        const next = prev.filter((c) => c.id !== credentialId);
+        nextCreds = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_credentials', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
+      instantSync({ credentials: nextCreds });
       appendLog(
         projectId,
         'CREDENTIAL_DELETED',
@@ -2717,8 +3088,9 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      setTasks((prev) =>
-        prev.map((t) =>
+      let nextTasksDeliv: Task[] = [];
+      setTasks((prev) => {
+        const next = prev.map((t) =>
           t.id === taskId
             ? {
                 ...t,
@@ -2726,8 +3098,14 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
                 updated_at: new Date().toISOString(),
               }
             : t
-        )
-      );
+        );
+        nextTasksDeliv = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_tasks', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
+      instantSync({ tasks: nextTasksDeliv });
 
       appendLog(
         projectId,
@@ -2750,8 +3128,9 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       const nextArchived = !proj.is_archived;
       const now = new Date().toISOString();
 
-      setProjects((prev) =>
-        prev.map((p) =>
+      let nextProjectsArch: Project[] = [];
+      setProjects((prev) => {
+        const next: Project[] = prev.map((p) =>
           p.id === projectId
             ? {
                 ...p,
@@ -2761,8 +3140,14 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
                 updated_at: now,
               }
             : p
-        )
-      );
+        );
+        nextProjectsArch = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_projects', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
+      instantSync({ projects: nextProjectsArch });
 
       appendLog(
         projectId,
@@ -2785,8 +3170,9 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       const del = req?.deliverables_json.find((d) => d.id === deliverableId);
       if (!req || !del) return;
 
-      setRequirements((prev) =>
-        prev.map((r) =>
+      let nextReqsSign: ProjectRequirement[] = [];
+      setRequirements((prev) => {
+        const next = prev.map((r) =>
           r.project_id === projectId
             ? {
                 ...r,
@@ -2795,8 +3181,14 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
                 ),
               }
             : r
-        )
-      );
+        );
+        nextReqsSign = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_requirements', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
+      instantSync({ requirements: nextReqsSign });
 
       appendLog(
         projectId,
@@ -2826,7 +3218,16 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         created_at: now,
       };
 
-      setRenewals((prev) => [newRenewal, ...prev]);
+      let nextRenewals: RenewalItem[] = [];
+      setRenewals((prev) => {
+        const next = [newRenewal, ...prev];
+        nextRenewals = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_renewals', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
+      instantSync({ renewals: nextRenewals });
 
       appendLog(
         input.project_id,
@@ -2844,8 +3245,9 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
 
   const updateRenewal = useCallback(
     (input: UpdateRenewalInput) => {
-      setRenewals((prev) =>
-        prev.map((r) => {
+      let nextRenewals: RenewalItem[] = [];
+      setRenewals((prev) => {
+        const next = prev.map((r) => {
           if (r.id !== input.id) return r;
           return {
             ...r,
@@ -2856,8 +3258,14 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
             remind_days: input.remind_days ?? 7,
             updated_at: new Date().toISOString(),
           };
-        })
-      );
+        });
+        nextRenewals = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_renewals', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
+      instantSync({ renewals: nextRenewals });
     },
     []
   );
@@ -2870,6 +3278,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       const todayStr = new Date().toISOString().split('T')[0];
       const now = new Date().toISOString();
 
+      let nextRenewals: RenewalItem[] = [];
       setRenewals((prev) => {
         const updated = prev.map((r) => {
           if (r.id !== input.id) return r;
@@ -2896,8 +3305,13 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
           created_at: now,
         };
 
-        return [nextItem, ...updated];
+        nextRenewals = [nextItem, ...updated];
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_renewals', JSON.stringify(nextRenewals)); } catch {}
+        }
+        return nextRenewals;
       });
+      instantSync({ renewals: nextRenewals });
 
       appendLog(
         existing.project_id,
@@ -2914,7 +3328,16 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
   const deleteRenewal = useCallback(
     (renewalId: string) => {
       const existing = renewals.find((r) => r.id === renewalId);
-      setRenewals((prev) => prev.filter((r) => r.id !== renewalId));
+      let nextRenewals: RenewalItem[] = [];
+      setRenewals((prev) => {
+        const next = prev.filter((r) => r.id !== renewalId);
+        nextRenewals = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_renewals', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
+      instantSync({ renewals: nextRenewals });
       if (existing) {
         appendLog(
           existing.project_id,
