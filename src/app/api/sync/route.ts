@@ -175,12 +175,14 @@ export async function POST(req: Request) {
       Object.assign(updates, body.updates);
     }
 
+    const serverTimestamp = new Date().toISOString();
+
     for (const [key, value] of Object.entries(updates)) {
       await client.execute({
         sql: `INSERT INTO workspace_store (key, value_json, updated_at) 
-              VALUES (?, ?, datetime('now')) 
-              ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at=datetime('now')`,
-        args: [key, JSON.stringify(value)],
+              VALUES (?, ?, ?) 
+              ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at`,
+        args: [key, JSON.stringify(value), serverTimestamp],
       });
 
       // Synchronize to relational tables where relevant for external SQL querying
@@ -271,7 +273,11 @@ export async function POST(req: Request) {
       }
     }
 
-    return NextResponse.json({ success: true, updatedKeys: Object.keys(updates) });
+    return NextResponse.json({
+      success: true,
+      updatedKeys: Object.keys(updates),
+      timestamp: serverTimestamp,
+    });
   } catch (err: any) {
     console.error('Error in POST /api/sync:', err);
     return NextResponse.json(

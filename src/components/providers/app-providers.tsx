@@ -492,6 +492,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
   const hasLoadedCloud = useRef<boolean>(false);
   const lastSyncedVersion = useRef<string | null>(null);
   const syncChannelRef = useRef<BroadcastChannel | null>(null);
+  const lastLocalActionTime = useRef<number>(0);
 
   // 1. Initial Load: Fetch full workspace from Turso Cloud Database
   useEffect(() => {
@@ -647,13 +648,14 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  // 1c. Multi-Device Live Cloud Heartbeat (Polls Turso every 3s without manual page refresh)
+  // 1c. Multi-Device Live Cloud Heartbeat (Polls Turso every 4s without manual page refresh)
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
     const interval = setInterval(async () => {
-      // Only heartbeat when the browser tab is actively visible and cloud is initialized
-      if (document.hidden || !hasLoadedCloud.current) return;
+      // Never poll if tab is hidden, cloud not loaded, or user performed an action recently (< 10 seconds)
+      // This prevents ANY card fluctuation or race-condition snaps during active work!
+      if (document.hidden || !hasLoadedCloud.current || Date.now() - lastLocalActionTime.current < 10000) return;
 
       try {
         const res = await fetch('/api/sync?check=version');
@@ -691,7 +693,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       } catch (e) {
         // Silent heartbeat catch
       }
-    }, 3000);
+    }, 4000);
 
     return () => clearInterval(interval);
   }, []);
@@ -742,9 +744,15 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
           },
         }),
       })
-        .then(() => setIsCloudSynced(true))
+        .then((res) => res.json())
+        .then((data) => {
+          setIsCloudSynced(true);
+          if (data?.timestamp) {
+            lastSyncedVersion.current = String(data.timestamp);
+          }
+        })
         .catch((e) => console.warn('Cloud sync error:', e));
-    }, 300);
+    }, 800);
 
     return () => clearTimeout(timeout);
   }, [
@@ -2621,7 +2629,23 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       });
 
       if (nextTasks.length > 0) {
+        lastLocalActionTime.current = Date.now();
         lastSyncedVersion.current = now;
+        fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            updates: { tasks: nextTasks },
+          }),
+        })
+          .then((res) => res.json())
+          .then((data) => {
+            if (data?.timestamp) {
+              lastSyncedVersion.current = String(data.timestamp);
+            }
+          })
+          .catch((e) => console.warn('Reorder sync error:', e));
+
         try {
           syncChannelRef.current?.postMessage({
             key: 'tasks',
@@ -2669,8 +2693,9 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         todayDate
       );
 
-      setTasks((prev) =>
-        prev.map((t) =>
+      let nextTasksStatusUpdated: Task[] = [];
+      setTasks((prev) => {
+        const next = prev.map((t) =>
           t.id === taskId
             ? {
                 ...t,
@@ -2680,8 +2705,40 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
                 updated_at: now,
               }
             : t
-        )
-      );
+        );
+        nextTasksStatusUpdated = next;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('holabusiness_tasks', JSON.stringify(next)); } catch {}
+        }
+        return next;
+      });
+
+      if (nextTasksStatusUpdated.length > 0) {
+        lastLocalActionTime.current = Date.now();
+        lastSyncedVersion.current = now;
+        fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            updates: { tasks: nextTasksStatusUpdated },
+          }),
+        })
+          .then((res) => res.json())
+          .then((data) => {
+            if (data?.timestamp) {
+              lastSyncedVersion.current = String(data.timestamp);
+            }
+          })
+          .catch((e) => console.warn('Status update sync error:', e));
+
+        try {
+          syncChannelRef.current?.postMessage({
+            key: 'tasks',
+            data: nextTasksStatusUpdated,
+            version: now,
+          });
+        } catch {}
+      }
 
       appendLog(
         projectId,
