@@ -648,55 +648,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  // 1c. Multi-Device Live Cloud Heartbeat (Polls Turso every 4s without manual page refresh)
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
 
-    const interval = setInterval(async () => {
-      // Never poll if tab is hidden, cloud not loaded, or user performed an action recently (< 10 seconds)
-      // This prevents ANY card fluctuation or race-condition snaps during active work!
-      if (document.hidden || !hasLoadedCloud.current || Date.now() - lastLocalActionTime.current < 10000) return;
-
-      try {
-        const res = await fetch('/api/sync?check=version');
-        if (!res.ok) return;
-        const json = await res.json();
-        if (json.configured && json.latest_version) {
-          const cloudVer = String(json.latest_version);
-          if (lastSyncedVersion.current && cloudVer > lastSyncedVersion.current) {
-            // New changes made on another computer/browser!
-            const fullRes = await fetch('/api/sync');
-            if (!fullRes.ok) return;
-            const fullJson = await fullRes.json();
-            if (fullJson.configured && fullJson.data) {
-              const d = fullJson.data;
-              lastSyncedVersion.current = fullJson.latest_version ? String(fullJson.latest_version) : cloudVer;
-              if (Array.isArray(d.tasks)) {
-                setTasks(d.tasks);
-                try { localStorage.setItem('holabusiness_tasks', JSON.stringify(d.tasks)); } catch {}
-              }
-              if (Array.isArray(d.projects)) {
-                setProjects(d.projects);
-                try { localStorage.setItem('holabusiness_projects', JSON.stringify(d.projects)); } catch {}
-              }
-              if (Array.isArray(d.users)) {
-                setUsers(d.users);
-                try { localStorage.setItem('holabusiness_users', JSON.stringify(d.users)); } catch {}
-              }
-              if (Array.isArray(d.activityLogs)) {
-                setActivityLogs(d.activityLogs);
-                try { localStorage.setItem('holabusiness_activity_logs', JSON.stringify(d.activityLogs)); } catch {}
-              }
-            }
-          }
-        }
-      } catch (e) {
-        // Silent heartbeat catch
-      }
-    }, 4000);
-
-    return () => clearInterval(interval);
-  }, []);
 
   // 2. Debounced Cloud Persistence: Automatically sync any changes to Turso & localStorage
   useEffect(() => {
