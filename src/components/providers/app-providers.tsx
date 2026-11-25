@@ -521,8 +521,31 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
                 }
                 return u;
               });
-            setUsers(cleanUsers);
-            if (typeof window !== 'undefined') localStorage.setItem('holabusiness_users', JSON.stringify(cleanUsers));
+
+            // Smart Merge: Don't lose locally added users that haven't synced to cloud yet!
+            const localUsers = getInitialStorage<User[]>('holabusiness_users', []);
+            const userMap = new Map<string, User>();
+            cleanUsers.forEach((u: User) => userMap.set(u.id, u));
+            localUsers.forEach((u: User) => {
+              if (u.id !== 'usr-admin-2' && !userMap.has(u.id)) {
+                userMap.set(u.id, u);
+              }
+            });
+            const mergedUsers = Array.from(userMap.values());
+
+            setUsers(mergedUsers);
+            if (typeof window !== 'undefined') localStorage.setItem('holabusiness_users', JSON.stringify(mergedUsers));
+
+            // If local storage had extra users not in cloud yet, sync them up immediately!
+            if (mergedUsers.length > cleanUsers.length) {
+              fetch('/api/sync', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  updates: { users: mergedUsers },
+                }),
+              }).catch(() => {});
+            }
           }
           if (Array.isArray(d.projects)) {
             setProjects(d.projects);
@@ -894,24 +917,52 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         password: input.password?.trim() || (isEmp ? 'employee123' : 'admin123'),
         created_at: new Date().toISOString(),
       };
+      let nextUsers: User[] = [];
       setUsers((prev) => {
         const updated = [...prev, newUser];
+        nextUsers = updated;
         if (typeof window !== 'undefined') {
           localStorage.setItem('holabusiness_users', JSON.stringify(updated));
         }
         return updated;
       });
+      let nextMemberships: Record<string, string[]> | undefined = undefined;
       if (input.assignedProjectIds && input.assignedProjectIds.length > 0) {
         setMemberships((prev) => {
           const updated = {
             ...prev,
             [newId]: input.assignedProjectIds!,
           };
+          nextMemberships = updated;
           if (typeof window !== 'undefined') {
             localStorage.setItem('holabusiness_memberships', JSON.stringify(updated));
           }
           return updated;
         });
+      }
+
+      // Immediately push to cloud so it NEVER disappears on refresh
+      if (typeof window !== 'undefined' && nextUsers.length > 0) {
+        const now = new Date().toISOString();
+        lastSyncedVersion.current = now;
+        fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            updates: {
+              users: nextUsers,
+              ...(nextMemberships ? { memberships: nextMemberships } : {}),
+            },
+          }),
+        }).catch((e) => console.warn('User create sync error:', e));
+
+        try {
+          syncChannelRef.current?.postMessage({
+            key: 'users',
+            data: nextUsers,
+            version: now,
+          });
+        } catch {}
       }
       appendLog(
         projects[0]?.id || 'system',
@@ -1027,13 +1078,27 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
 
   const changeUserPassword = useCallback(
     (userId: string, newPass: string) => {
+      let nextUsers: User[] = [];
       setUsers((prev) => {
         const updated = prev.map((u) => (u.id === userId ? { ...u, password: newPass.trim() } : u));
+        nextUsers = updated;
         if (typeof window !== 'undefined') {
           localStorage.setItem('holabusiness_users', JSON.stringify(updated));
         }
         return updated;
       });
+
+      if (typeof window !== 'undefined' && nextUsers.length > 0) {
+        const now = new Date().toISOString();
+        lastSyncedVersion.current = now;
+        fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            updates: { users: nextUsers },
+          }),
+        }).catch((e) => console.warn('Password change cloud sync error:', e));
+      }
     },
     []
   );
@@ -1050,15 +1115,29 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       }
 
       const nextDisabled = !target.is_disabled;
+      let nextUsers: User[] = [];
       setUsers((prev) => {
         const updated = prev.map((u) =>
           u.id === userId ? { ...u, is_disabled: nextDisabled } : u
         );
+        nextUsers = updated;
         if (typeof window !== 'undefined') {
           localStorage.setItem('holabusiness_users', JSON.stringify(updated));
         }
         return updated;
       });
+
+      if (typeof window !== 'undefined' && nextUsers.length > 0) {
+        const now = new Date().toISOString();
+        lastSyncedVersion.current = now;
+        fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            updates: { users: nextUsers },
+          }),
+        }).catch((e) => console.warn('User toggle cloud sync error:', e));
+      }
 
       appendLog(
         projects[0]?.id || 'system',
@@ -1082,13 +1161,35 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         throw new Error('The Main Admin account cannot be deleted.');
       }
 
+      let nextUsers: User[] = [];
       setUsers((prev) => {
         const updated = prev.filter((u) => u.id !== userId);
+        nextUsers = updated;
         if (typeof window !== 'undefined') {
           localStorage.setItem('holabusiness_users', JSON.stringify(updated));
         }
         return updated;
       });
+
+      if (typeof window !== 'undefined' && nextUsers.length > 0) {
+        const now = new Date().toISOString();
+        lastSyncedVersion.current = now;
+        fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            updates: { users: nextUsers },
+          }),
+        }).catch((e) => console.warn('User delete cloud sync error:', e));
+
+        try {
+          syncChannelRef.current?.postMessage({
+            key: 'users',
+            data: nextUsers,
+            version: now,
+          });
+        } catch {}
+      }
 
       appendLog(
         projects[0]?.id || 'system',
@@ -1146,14 +1247,45 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         updated_at: now,
       };
 
+      let nextProjects: Project[] = [];
       setProjects((prev) => {
         const next = [newProject, ...prev];
+        nextProjects = next;
         if (typeof window !== 'undefined') {
           localStorage.setItem('holabusiness_projects', JSON.stringify(next));
         }
         return next;
       });
-      setRequirements((prev) => [newReq, ...prev]);
+      setRequirements((prev) => {
+        const nextReqs = [newReq, ...prev];
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('holabusiness_requirements', JSON.stringify(nextReqs));
+        }
+        return nextReqs;
+      });
+
+      if (typeof window !== 'undefined' && nextProjects.length > 0) {
+        const nowStr = new Date().toISOString();
+        lastSyncedVersion.current = nowStr;
+        fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            updates: {
+              projects: nextProjects,
+              requirements: [newReq, ...requirements],
+            },
+          }),
+        }).catch((e) => console.warn('Project create sync error:', e));
+
+        try {
+          syncChannelRef.current?.postMessage({
+            key: 'projects',
+            data: nextProjects,
+            version: nowStr,
+          });
+        } catch {}
+      }
       setMemberships((prev) => {
         const next = { ...prev };
         DEMO_USERS.forEach((u) => {
@@ -2212,7 +2344,35 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         updated_at: now,
       };
 
-      setTasks((prev) => [newTask, ...prev]);
+      let nextTasks: Task[] = [];
+      setTasks((prev) => {
+        const next = [newTask, ...prev];
+        nextTasks = next;
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('holabusiness_tasks', JSON.stringify(next));
+        }
+        return next;
+      });
+
+      if (typeof window !== 'undefined' && nextTasks.length > 0) {
+        const nowStr = new Date().toISOString();
+        lastSyncedVersion.current = nowStr;
+        fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            updates: { tasks: nextTasks },
+          }),
+        }).catch((e) => console.warn('Task create sync error:', e));
+
+        try {
+          syncChannelRef.current?.postMessage({
+            key: 'tasks',
+            data: nextTasks,
+            version: nowStr,
+          });
+        } catch {}
+      }
 
       if (effectiveAssigneeId) {
         setMemberships((prev) => ({
@@ -2258,8 +2418,9 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         todayDate
       );
 
-      setTasks((prev) =>
-        prev.map((t) =>
+      let nextUpdatedTasks: Task[] = [];
+      setTasks((prev) => {
+        const next = prev.map((t) =>
           t.id === taskId
             ? {
                 ...t,
@@ -2281,8 +2442,32 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
                 updated_at: now,
               }
             : t
-        )
-      );
+        );
+        nextUpdatedTasks = next;
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('holabusiness_tasks', JSON.stringify(next));
+        }
+        return next;
+      });
+
+      if (typeof window !== 'undefined' && nextUpdatedTasks.length > 0) {
+        lastSyncedVersion.current = now;
+        fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            updates: { tasks: nextUpdatedTasks },
+          }),
+        }).catch((e) => console.warn('Task update sync error:', e));
+
+        try {
+          syncChannelRef.current?.postMessage({
+            key: 'tasks',
+            data: nextUpdatedTasks,
+            version: now,
+          });
+        } catch {}
+      }
 
       if (effectiveAssigneeId) {
         setMemberships((prev) => ({
@@ -2318,15 +2503,41 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      setTasks((prev) =>
-        prev
+      let nextTasksAfterDelete: Task[] = [];
+      setTasks((prev) => {
+        const next = prev
           .filter((t) => t.id !== taskId)
           .map((t) =>
             t.blocked_by_task_id === taskId
               ? { ...t, blocked_by_task_id: null }
               : t
-          )
-      );
+          );
+        nextTasksAfterDelete = next;
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('holabusiness_tasks', JSON.stringify(next));
+        }
+        return next;
+      });
+
+      if (typeof window !== 'undefined') {
+        const nowStr = new Date().toISOString();
+        lastSyncedVersion.current = nowStr;
+        fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            updates: { tasks: nextTasksAfterDelete },
+          }),
+        }).catch((e) => console.warn('Task delete sync error:', e));
+
+        try {
+          syncChannelRef.current?.postMessage({
+            key: 'tasks',
+            data: nextTasksAfterDelete,
+            version: nowStr,
+          });
+        } catch {}
+      }
 
       appendLog(
         projectId,
