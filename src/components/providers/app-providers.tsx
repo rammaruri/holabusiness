@@ -11,6 +11,8 @@ import React, {
   useSyncExternalStore,
 } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { ConvexProvider, ConvexReactClient, useMutation, useQuery } from 'convex/react';
+import { api } from '../../../convex/_generated/api';
 import type {
   ActivityActionType,
   ActivityLog,
@@ -236,7 +238,6 @@ interface AuthContextValue {
   signInWithCredentials: (email: string, password?: string) => { success: boolean; error?: string };
   isAuthenticated: boolean;
   signOut: () => void;
-  // Core Pre-Sales & Lifecycle Mutations
   createProject: (input: CreateProjectInput) => Project;
   addContact: (input: CreateContactInput) => ProjectContact;
   updateContact: (contactId: string, updates: Partial<ProjectContact>) => void;
@@ -245,7 +246,6 @@ interface AuthContextValue {
   updateMeeting: (meetingId: string, updates: Partial<ProjectMeeting>) => void;
   deleteMeeting: (meetingId: string) => void;
   recordMeetingOutcome: (input: RecordMeetingOutcomeInput) => void;
-  // Client Talk Mutations
   addClientTalk: (input: CreateClientTalkInput) => ClientTalkRecord;
   updateClientTalk: (talkId: string, updates: Partial<ClientTalkRecord>) => void;
   deleteClientTalk: (talkId: string) => void;
@@ -255,10 +255,13 @@ interface AuthContextValue {
   recordProposalOutcome: (input: RecordProposalOutcomeInput) => void;
   updateProjectStatus: (projectId: string, status: ProjectStatus) => void;
   deleteProject: (projectId: string) => void;
-  reopenDraftProject: (projectId: string, targetStage: 'Meeting Scheduled' | 'Proposal Review' | 'Intake' | 'In Execution', note?: string) => void;
+  reopenDraftProject: (
+    projectId: string,
+    targetStage: 'Meeting Scheduled' | 'Proposal Review' | 'Intake' | 'In Execution',
+    note?: string
+  ) => void;
   uploadDocument: (input: UploadDocumentInput) => ProjectDocument;
   toggleDocumentSignOff: (docId: string) => void;
-  // Existing Step 4 Mutations
   updateRequirements: (
     projectId: string,
     updates: {
@@ -301,7 +304,6 @@ interface AuthContextValue {
   ) => void;
   toggleProjectArchive: (projectId: string) => void;
   submitClientSignOff: (projectId: string, deliverableId: string) => void;
-  // Renewal Mutations
   createRenewal: (input: CreateRenewalInput) => RenewalItem;
   updateRenewal: (input: UpdateRenewalInput) => void;
   markRenewalAsRenewed: (input: MarkRenewedInput) => void;
@@ -368,7 +370,7 @@ function generateProjectSlug(title: string, existingProjects: Project[]): string
     .replace(/^-+|-+$/g, '');
 
   const baseSlug = clean || 'project';
-  let candidate = `proj-${baseSlug}`;
+  const candidate = `proj-${baseSlug}`;
 
   const existingIds = new Set(existingProjects.map((p) => p.id.toLowerCase()));
   if (!existingIds.has(candidate)) {
@@ -382,55 +384,132 @@ function generateProjectSlug(title: string, existingProjects: Project[]): string
   return `${candidate}-${counter}`;
 }
 
-function getInitialStorage<T>(key: string, fallback: T): T {
-  if (typeof window !== 'undefined') {
-    try {
-      const stored = localStorage.getItem(key);
-      if (stored !== null) {
-        return JSON.parse(stored);
+const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL || 'https://placeholder.convex.cloud';
+const convexClient = new ConvexReactClient(convexUrl);
+
+function AppProvidersInner({ children }: { children: React.ReactNode }) {
+  const workspace = useQuery(api.workspace.getWorkspace);
+  const seedOrMigrateMut = useMutation(api.workspace.seedOrMigrate);
+  const upsertUserMut = useMutation(api.workspace.upsertUser);
+  const deleteUserMut = useMutation(api.workspace.deleteUser);
+  const setUserMembershipsMut = useMutation(api.workspace.setUserMemberships);
+  const addProjectToUserMembershipMut = useMutation(api.workspace.addProjectToUserMembership);
+  const createProjectWithDetailsMut = useMutation(api.workspace.createProjectWithDetails);
+  const patchProjectMut = useMutation(api.workspace.patchProject);
+  const deleteProjectCascadeMut = useMutation(api.workspace.deleteProjectCascade);
+  const createContactMut = useMutation(api.workspace.createContact);
+  const patchContactMut = useMutation(api.workspace.patchContact);
+  const deleteContactMut = useMutation(api.workspace.deleteContact);
+  const createMeetingMut = useMutation(api.workspace.createMeeting);
+  const patchMeetingMut = useMutation(api.workspace.patchMeeting);
+  const deleteMeetingMut = useMutation(api.workspace.deleteMeeting);
+  const createClientTalkMut = useMutation(api.workspace.createClientTalk);
+  const patchClientTalkMut = useMutation(api.workspace.patchClientTalk);
+  const deleteClientTalkMut = useMutation(api.workspace.deleteClientTalk);
+  const createProposalWithDocMut = useMutation(api.workspace.createProposalWithDoc);
+  const patchProposalMut = useMutation(api.workspace.patchProposal);
+  const deleteProposalMut = useMutation(api.workspace.deleteProposal);
+  const createDocumentMut = useMutation(api.workspace.createDocument);
+  const patchDocumentMut = useMutation(api.workspace.patchDocument);
+  const patchRequirementMut = useMutation(api.workspace.patchRequirementByProject);
+  const createAssetMut = useMutation(api.workspace.createAsset);
+  const patchAssetMut = useMutation(api.workspace.patchAsset);
+  const deleteAssetMut = useMutation(api.workspace.deleteAsset);
+  const createCredentialMut = useMutation(api.workspace.createCredential);
+  const patchCredentialMut = useMutation(api.workspace.patchCredential);
+  const deleteCredentialMut = useMutation(api.workspace.deleteCredential);
+  const createTaskMut = useMutation(api.workspace.createTask);
+  const patchTaskMut = useMutation(api.workspace.patchTask);
+  const deleteTaskMut = useMutation(api.workspace.deleteTask);
+  const reorderTasksMut = useMutation(api.workspace.reorderTasks).withOptimisticUpdate(
+    (localStore, args) => {
+      const current = localStore.getQuery(api.workspace.getWorkspace, {});
+      if (!current) return;
+      const taskMap = new Map(current.tasks.map((t: any) => [t.id, t]));
+      const updatedTasks = args.orderedTaskIds
+        .map((id, idx) => {
+          const t = taskMap.get(id);
+          if (!t) return null;
+          if (id === args.movedTaskId) {
+            return { ...t, ...args.movedTaskPatch, sort_order: idx };
+          }
+          return { ...t, sort_order: idx };
+        })
+        .filter(Boolean);
+      for (const t of current.tasks) {
+        if (!args.orderedTaskIds.includes(t.id)) {
+          updatedTasks.push(t);
+        }
       }
-    } catch {}
-  }
-  return fallback;
-}
-
-/** Fire-and-forget instant cloud push for any set of keys. */
-function instantSync(updates: Record<string, unknown>) {
-  if (typeof window === 'undefined') return;
-  fetch('/api/sync', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ updates }),
-  }).catch((e) => console.warn('Instant cloud sync error:', e));
-}
-
-export function AppProviders({ children }: { children: React.ReactNode }) {
-  const [queryClient] = useState(
-    () =>
-      new QueryClient({
-        defaultOptions: {
-          queries: {
-            staleTime: 30_000,
-            refetchOnWindowFocus: false,
-          },
-        },
-      })
+      localStore.setQuery(api.workspace.getWorkspace, {}, {
+        ...current,
+        tasks: updatedTasks as any,
+      });
+    }
   );
+  const createRenewalMut = useMutation(api.workspace.createRenewal);
+  const patchRenewalMut = useMutation(api.workspace.patchRenewal);
+  const markRenewalRenewedMut = useMutation(api.workspace.markRenewalRenewed);
+  const deleteRenewalMut = useMutation(api.workspace.deleteRenewal);
+  const appendLogMut = useMutation(api.workspace.appendLog);
 
-  const [users, setUsers] = useState<User[]>(() => {
-    if (typeof window !== 'undefined') {
+  const migrationStarted = useRef(false);
+
+  // One-time automatic migration from Turso (or initial seed) into Convex
+  useEffect(() => {
+    if (!workspace || workspace.seeded || migrationStarted.current) return;
+    migrationStarted.current = true;
+
+    async function runInitialMigration() {
+      let tursoData: Record<string, any> | null = null;
       try {
-        const stored = localStorage.getItem('holabusiness_users');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        const res = await fetch('/api/sync');
+        if (res.ok) {
+          const json = await res.json();
+          if (json?.configured && json?.data) {
+            tursoData = json.data;
+          }
         }
       } catch (err) {
-        console.error('Failed to read users from localStorage', err);
+        console.warn('Turso migration fetch skipped, using defaults:', err);
       }
+
+      const seedUsers =
+        Array.isArray(tursoData?.users) && tursoData.users.length > 0
+          ? tursoData.users
+          : DEMO_USERS;
+
+      await seedOrMigrateMut({
+        users: seedUsers,
+        projects: Array.isArray(tursoData?.projects) ? tursoData.projects : INITIAL_SHELL_PROJECTS,
+        memberships:
+          tursoData?.memberships && typeof tursoData.memberships === 'object'
+            ? tursoData.memberships
+            : DEMO_PROJECT_MEMBERSHIPS,
+        contacts: Array.isArray(tursoData?.contacts) ? tursoData.contacts : INITIAL_CONTACTS,
+        meetings: Array.isArray(tursoData?.meetings) ? tursoData.meetings : INITIAL_MEETINGS,
+        clientTalks: Array.isArray(tursoData?.clientTalks)
+          ? tursoData.clientTalks
+          : INITIAL_CLIENT_TALKS,
+        proposals: Array.isArray(tursoData?.proposals) ? tursoData.proposals : INITIAL_PROPOSALS,
+        documents: Array.isArray(tursoData?.documents) ? tursoData.documents : INITIAL_DOCUMENTS,
+        requirements: Array.isArray(tursoData?.requirements)
+          ? tursoData.requirements
+          : INITIAL_REQUIREMENTS,
+        assets: Array.isArray(tursoData?.assets) ? tursoData.assets : INITIAL_ASSETS,
+        credentials: Array.isArray(tursoData?.credentials)
+          ? tursoData.credentials
+          : INITIAL_CREDENTIALS,
+        tasks: Array.isArray(tursoData?.tasks) ? tursoData.tasks : INITIAL_TASKS,
+        renewals: Array.isArray(tursoData?.renewals) ? tursoData.renewals : INITIAL_RENEWALS,
+        activityLogs: Array.isArray(tursoData?.activityLogs)
+          ? tursoData.activityLogs
+          : INITIAL_ACTIVITY_LOGS,
+      }).catch((e) => console.error('Convex seed/migration error:', e));
     }
-    return DEMO_USERS;
-  });
+
+    runInitialMigration();
+  }, [workspace, seedOrMigrateMut]);
 
   const [currentUserId, setCurrentUserId] = useState<string>(() => {
     if (typeof window !== 'undefined') {
@@ -451,322 +530,97 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
     }
     return false;
   });
+
   const todayDate = useSyncExternalStore(
     emptySubscribe,
     getClientTodaySnapshot,
     getServerTodaySnapshot
   );
 
-  const [projects, setProjects] = useState<Project[]>(() =>
-    getInitialStorage('holabusiness_projects', INITIAL_SHELL_PROJECTS)
-  );
-  const [memberships, setMemberships] = useState<Record<string, string[]>>(() =>
-    getInitialStorage('holabusiness_memberships', DEMO_PROJECT_MEMBERSHIPS)
-  );
-  const [contacts, setContacts] = useState<ProjectContact[]>(() =>
-    getInitialStorage('holabusiness_contacts', INITIAL_CONTACTS)
-  );
-  const [meetings, setMeetings] = useState<ProjectMeeting[]>(() =>
-    getInitialStorage('holabusiness_meetings', INITIAL_MEETINGS)
-  );
-  const [clientTalks, setClientTalks] = useState<ClientTalkRecord[]>(() =>
-    getInitialStorage('holabusiness_client_talks', INITIAL_CLIENT_TALKS)
-  );
-  const [proposals, setProposals] = useState<ProjectProposal[]>(() =>
-    getInitialStorage('holabusiness_proposals', INITIAL_PROPOSALS)
-  );
-  const [documents, setDocuments] = useState<ProjectDocument[]>(() =>
-    getInitialStorage('holabusiness_documents', INITIAL_DOCUMENTS)
-  );
-  const [requirements, setRequirements] = useState<ProjectRequirement[]>(() =>
-    getInitialStorage('holabusiness_requirements', INITIAL_REQUIREMENTS)
-  );
-  const [assets, setAssets] = useState<ProjectAsset[]>(() =>
-    getInitialStorage('holabusiness_assets', INITIAL_ASSETS)
-  );
-  const [credentials, setCredentials] = useState<ProjectCredential[]>(() =>
-    getInitialStorage('holabusiness_credentials', INITIAL_CREDENTIALS)
-  );
-  const [tasks, setTasks] = useState<Task[]>(() =>
-    getInitialStorage('holabusiness_tasks', INITIAL_TASKS)
-  );
-  const [renewals, setRenewals] = useState<RenewalItem[]>(() =>
-    getInitialStorage('holabusiness_renewals', INITIAL_RENEWALS)
-  );
-  const [activityLogs, setActivityLogs] = useState<ActivityLog[]>(() =>
-    getInitialStorage('holabusiness_activity_logs', INITIAL_ACTIVITY_LOGS)
-  );
+  const isCloudSyncing = workspace === undefined;
+  const isCloudSynced = workspace !== undefined;
 
-  const [isCloudSyncing, setIsCloudSyncing] = useState<boolean>(true);
-  const [isCloudSynced, setIsCloudSynced] = useState<boolean>(false);
-  const hasLoadedCloud = useRef<boolean>(false);
-  const lastSyncedVersion = useRef<string | null>(null);
-  const syncChannelRef = useRef<BroadcastChannel | null>(null);
-  const lastLocalActionTime = useRef<number>(0);
-
-  // 1. Initial Load: Fetch full workspace from Turso Cloud Database
-  useEffect(() => {
-    let isCancelled = false;
-    async function loadFromTurso() {
-      try {
-        const res = await fetch('/api/sync');
-        if (!res.ok) throw new Error(`Sync HTTP ${res.status}`);
-        const result = await res.json();
-        if (result.configured && result.data && !isCancelled) {
-          if (result.latest_version) {
-            lastSyncedVersion.current = String(result.latest_version);
-          }
-          const d = result.data;
-          if (Array.isArray(d.users) && d.users.length > 0) {
-            const cleanUsers = d.users
-              .filter((u: User) => u.id !== 'usr-admin-2')
-              .map((u: User) => {
-                if (u.id === 'usr-admin-1' && (u.email === 'elena@holabusiness.io' || u.name === 'Elena Vance')) {
-                  return {
-                    ...u,
-                    name: 'Ram Maruri',
-                    email: 'ram@holabusiness.in',
-                    title: 'Primary Founder & Managing Partner',
-                    password: u.password === 'admin' ? 'admin123' : (u.password || 'admin123'),
-                  };
-                }
-                return u;
-              });
-
-            // Smart Merge: Rescue locally added users created AFTER the last cloud write (never resurrect deleted users)
-            const cloudVersion = result.latest_version ? String(result.latest_version) : '';
-            const localUsers = getInitialStorage<User[]>('holabusiness_users', []);
-            const userMap = new Map<string, User>();
-            cleanUsers.forEach((u: User) => userMap.set(u.id, u));
-            localUsers.forEach((u: User) => {
-              if (
-                u.id !== 'usr-admin-2' &&
-                !userMap.has(u.id) &&
-                (!cloudVersion || (u.created_at && u.created_at > cloudVersion))
-              ) {
-                userMap.set(u.id, u);
-              }
-            });
-            const mergedUsers = Array.from(userMap.values());
-
-            setUsers(mergedUsers);
-            if (typeof window !== 'undefined') localStorage.setItem('holabusiness_users', JSON.stringify(mergedUsers));
-
-            // If local storage had extra newly-created users not in cloud yet, sync them up immediately
-            if (mergedUsers.length > cleanUsers.length) {
-              instantSync({ users: mergedUsers });
-            }
-          }
-          if (Array.isArray(d.projects)) {
-            const cloudVersion = result.latest_version ? String(result.latest_version) : '';
-            const localProjects = getInitialStorage<Project[]>('holabusiness_projects', []);
-            const projMap = new Map<string, Project>();
-            d.projects.forEach((p: Project) => projMap.set(p.id, p));
-            localProjects.forEach((p: Project) => {
-              if (!projMap.has(p.id) && (!cloudVersion || (p.created_at && p.created_at > cloudVersion))) {
-                projMap.set(p.id, p);
-              }
-            });
-            const mergedProjects = Array.from(projMap.values());
-            setProjects(mergedProjects);
-            if (typeof window !== 'undefined') localStorage.setItem('holabusiness_projects', JSON.stringify(mergedProjects));
-            if (mergedProjects.length > d.projects.length) {
-              instantSync({ projects: mergedProjects });
-            }
-          }
-          if (Array.isArray(d.contacts)) {
-            setContacts(d.contacts);
-            if (typeof window !== 'undefined') localStorage.setItem('holabusiness_contacts', JSON.stringify(d.contacts));
-          }
-          if (Array.isArray(d.meetings)) {
-            setMeetings(d.meetings);
-            if (typeof window !== 'undefined') localStorage.setItem('holabusiness_meetings', JSON.stringify(d.meetings));
-          }
-          if (Array.isArray(d.clientTalks)) {
-            setClientTalks(d.clientTalks);
-            if (typeof window !== 'undefined') localStorage.setItem('holabusiness_client_talks', JSON.stringify(d.clientTalks));
-          }
-          if (Array.isArray(d.proposals)) {
-            setProposals(d.proposals);
-            if (typeof window !== 'undefined') localStorage.setItem('holabusiness_proposals', JSON.stringify(d.proposals));
-          }
-          if (Array.isArray(d.documents)) {
-            setDocuments(d.documents);
-            if (typeof window !== 'undefined') localStorage.setItem('holabusiness_documents', JSON.stringify(d.documents));
-          }
-          if (Array.isArray(d.requirements)) {
-            setRequirements(d.requirements);
-            if (typeof window !== 'undefined') localStorage.setItem('holabusiness_requirements', JSON.stringify(d.requirements));
-          }
-          if (Array.isArray(d.assets)) {
-            setAssets(d.assets);
-            if (typeof window !== 'undefined') localStorage.setItem('holabusiness_assets', JSON.stringify(d.assets));
-          }
-          if (Array.isArray(d.credentials)) {
-            setCredentials(d.credentials);
-            if (typeof window !== 'undefined') localStorage.setItem('holabusiness_credentials', JSON.stringify(d.credentials));
-          }
-          if (Array.isArray(d.tasks)) {
-            const cloudVersion = result.latest_version ? String(result.latest_version) : '';
-            const localTasks = getInitialStorage<Task[]>('holabusiness_tasks', []);
-            const taskMap = new Map<string, Task>();
-            d.tasks.forEach((t: Task) => taskMap.set(t.id, t));
-            localTasks.forEach((t: Task) => {
-              if (!taskMap.has(t.id) && (!cloudVersion || (t.created_at && t.created_at > cloudVersion))) {
-                taskMap.set(t.id, t);
-              }
-            });
-            const mergedTasks = Array.from(taskMap.values());
-            setTasks(mergedTasks);
-            if (typeof window !== 'undefined') localStorage.setItem('holabusiness_tasks', JSON.stringify(mergedTasks));
-            if (mergedTasks.length > d.tasks.length) {
-              instantSync({ tasks: mergedTasks });
-            }
-          }
-          if (Array.isArray(d.renewals)) {
-            setRenewals(d.renewals);
-            if (typeof window !== 'undefined') localStorage.setItem('holabusiness_renewals', JSON.stringify(d.renewals));
-          }
-          if (Array.isArray(d.activityLogs)) {
-            setActivityLogs(d.activityLogs);
-            if (typeof window !== 'undefined') localStorage.setItem('holabusiness_activity_logs', JSON.stringify(d.activityLogs));
-          }
-          if (d.memberships && typeof d.memberships === 'object' && !Array.isArray(d.memberships)) {
-            setMemberships(d.memberships);
-            if (typeof window !== 'undefined') localStorage.setItem('holabusiness_memberships', JSON.stringify(d.memberships));
-          }
-          setIsCloudSynced(true);
-          hasLoadedCloud.current = true;
-        }
-      } catch (err) {
-        console.warn('Could not load from Turso cloud, using local cache:', err);
-      } finally {
-        if (!isCancelled) {
-          setIsCloudSyncing(false);
-        }
-      }
-    }
-    loadFromTurso();
-    return () => {
-      isCancelled = true;
-    };
-  }, []);
-
-  // 1b. Multi-Tab Instant BroadcastChannel Sync (<10ms across tabs on same device)
-  useEffect(() => {
-    if (typeof window === 'undefined' || typeof BroadcastChannel === 'undefined') return;
-    let channel: BroadcastChannel | null = null;
-    try {
-      channel = new BroadcastChannel('hb_sync_bus');
-      syncChannelRef.current = channel;
-      channel.onmessage = (event) => {
-        if (!event.data || typeof event.data !== 'object') return;
-        const { key, data, version } = event.data;
-        if (version) {
-          lastSyncedVersion.current = String(version);
-        }
-        if (key === 'tasks' && Array.isArray(data)) {
-          setTasks(data);
-          try { localStorage.setItem('holabusiness_tasks', JSON.stringify(data)); } catch {}
-        } else if (key === 'projects' && Array.isArray(data)) {
-          setProjects(data);
-          try { localStorage.setItem('holabusiness_projects', JSON.stringify(data)); } catch {}
-        } else if (key === 'users' && Array.isArray(data)) {
-          setUsers(data);
-          try { localStorage.setItem('holabusiness_users', JSON.stringify(data)); } catch {}
-        }
-      };
-    } catch {}
-
-    return () => {
-      try { channel?.close(); } catch {}
-    };
-  }, []);
-
-
-
-  // 2. Debounced Cloud Persistence: Automatically sync any changes to Turso & localStorage
-  useEffect(() => {
-    if (!hasLoadedCloud.current) return;
-
-    if (typeof window !== 'undefined') {
-      try {
-        localStorage.setItem('holabusiness_users', JSON.stringify(users));
-        localStorage.setItem('holabusiness_projects', JSON.stringify(projects));
-        localStorage.setItem('holabusiness_tasks', JSON.stringify(tasks));
-        localStorage.setItem('holabusiness_contacts', JSON.stringify(contacts));
-        localStorage.setItem('holabusiness_meetings', JSON.stringify(meetings));
-        localStorage.setItem('holabusiness_client_talks', JSON.stringify(clientTalks));
-        localStorage.setItem('holabusiness_proposals', JSON.stringify(proposals));
-        localStorage.setItem('holabusiness_documents', JSON.stringify(documents));
-        localStorage.setItem('holabusiness_requirements', JSON.stringify(requirements));
-        localStorage.setItem('holabusiness_assets', JSON.stringify(assets));
-        localStorage.setItem('holabusiness_credentials', JSON.stringify(credentials));
-        localStorage.setItem('holabusiness_renewals', JSON.stringify(renewals));
-        localStorage.setItem('holabusiness_activity_logs', JSON.stringify(activityLogs));
-        localStorage.setItem('holabusiness_memberships', JSON.stringify(memberships));
-      } catch {}
-    }
-
-    const timeout = setTimeout(() => {
-      fetch('/api/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          updates: {
-            users,
-            projects,
-            contacts,
-            meetings,
-            clientTalks,
-            proposals,
-            documents,
-            requirements,
-            assets,
-            credentials,
-            tasks,
-            renewals,
-            activityLogs,
-            memberships,
-          },
-        }),
-      })
-        .then((res) => res.json())
-        .then((data) => {
-          setIsCloudSynced(true);
-          if (data?.timestamp) {
-            lastSyncedVersion.current = String(data.timestamp);
-          }
-        })
-        .catch((e) => console.warn('Cloud sync error:', e));
-    }, 800);
-
-    return () => clearTimeout(timeout);
-  }, [
-    users,
-    projects,
-    contacts,
-    meetings,
-    clientTalks,
-    proposals,
-    documents,
-    requirements,
-    assets,
-    credentials,
-    tasks,
-    renewals,
-    activityLogs,
-    memberships,
-  ]);
+  const users = useMemo(
+    () => (workspace?.users as User[] | undefined) ?? DEMO_USERS,
+    [workspace?.users]
+  );
+  const projects = useMemo(
+    () => (workspace?.projects as Project[] | undefined) ?? INITIAL_SHELL_PROJECTS,
+    [workspace?.projects]
+  );
+  const memberships = useMemo(
+    () => (workspace?.memberships as Record<string, string[]> | undefined) ?? DEMO_PROJECT_MEMBERSHIPS,
+    [workspace?.memberships]
+  );
+  const contacts = useMemo(
+    () => (workspace?.contacts as ProjectContact[] | undefined) ?? [],
+    [workspace?.contacts]
+  );
+  const meetings = useMemo(
+    () => (workspace?.meetings as ProjectMeeting[] | undefined) ?? [],
+    [workspace?.meetings]
+  );
+  const clientTalks = useMemo(
+    () => (workspace?.clientTalks as ClientTalkRecord[] | undefined) ?? [],
+    [workspace?.clientTalks]
+  );
+  const proposals = useMemo(
+    () => (workspace?.proposals as ProjectProposal[] | undefined) ?? [],
+    [workspace?.proposals]
+  );
+  const documents = useMemo(
+    () => (workspace?.documents as ProjectDocument[] | undefined) ?? [],
+    [workspace?.documents]
+  );
+  const requirements = useMemo(
+    () => (workspace?.requirements as ProjectRequirement[] | undefined) ?? [],
+    [workspace?.requirements]
+  );
+  const assets = useMemo(
+    () => (workspace?.assets as ProjectAsset[] | undefined) ?? [],
+    [workspace?.assets]
+  );
+  const credentials = useMemo(
+    () => (workspace?.credentials as ProjectCredential[] | undefined) ?? [],
+    [workspace?.credentials]
+  );
+  const tasks = useMemo(
+    () => (workspace?.tasks as Task[] | undefined) ?? [],
+    [workspace?.tasks]
+  );
+  const renewals = useMemo(
+    () => (workspace?.renewals as RenewalItem[] | undefined) ?? [],
+    [workspace?.renewals]
+  );
+  const activityLogs = useMemo(
+    () => (workspace?.activityLogs as ActivityLog[] | undefined) ?? [],
+    [workspace?.activityLogs]
+  );
 
   const currentUser = useMemo(
     () => users.find((u) => u.id === currentUserId) ?? users[0] ?? DEMO_USERS[0],
     [users, currentUserId]
   );
 
+  // Real-time security enforcement: if admin disables current user, force sign out immediately
+  useEffect(() => {
+    if (isAuthenticated && workspace?.seeded && currentUserId) {
+      const liveUser = users.find((u) => u.id === currentUserId);
+      if (!liveUser || liveUser.is_disabled) {
+        setIsAuthenticated(false);
+        setCurrentUserId('');
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('holabusiness_auth_user');
+          document.cookie = 'holabusiness_auth_session=; path=/; max-age=0; SameSite=Lax';
+          window.location.href = '/login';
+        }
+      }
+    }
+  }, [isAuthenticated, workspace?.seeded, currentUserId, users]);
+
   const permissions = useMemo(
     () => getPermissions(currentUser.role, currentUser),
-    [currentUser.role, currentUser]
+    [currentUser]
   );
 
   const appendLog = useCallback(
@@ -789,12 +643,11 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         metadata_json: metadata,
         created_at: new Date().toISOString(),
       };
-      setActivityLogs((prev) => [entry, ...prev]);
+      appendLogMut({ log: entry }).catch((e) => console.warn('Log append error:', e));
     },
-    [currentUser.id]
+    [currentUser.id, appendLogMut]
   );
 
-  // Scoped project access: Admins see all projects; Employees only see assigned projects
   const accessibleProjects = useMemo(() => {
     if (currentUser.role === 'admin') {
       return projects;
@@ -808,7 +661,6 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
     return projects.filter((p) => assignedProjectIds.has(p.id));
   }, [projects, currentUser.id, currentUser.role, memberships, tasks]);
 
-  // Scoped task access: Admins see all tasks; Employees ONLY see tasks assigned to them (Option A - Strict Privacy)
   const accessibleTasks = useMemo(() => {
     if (currentUser.role === 'admin') {
       return tasks;
@@ -847,10 +699,6 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
     const inputPass = password?.trim() || '';
     const storedPass = found.password?.trim() || '';
 
-    // Bulletproof password matching:
-    // 1. Matches stored password exactly
-    // 2. Or matches standard agency master passwords: 'admin123', 'employee123', or 'admin'
-    // 3. Or empty stored password
     const isMatch =
       !storedPass ||
       storedPass === inputPass ||
@@ -912,53 +760,11 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         password: input.password?.trim() || (isEmp ? 'employee123' : 'admin123'),
         created_at: new Date().toISOString(),
       };
-      let nextUsers: User[] = [];
-      setUsers((prev) => {
-        const updated = [...prev, newUser];
-        nextUsers = updated;
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('holabusiness_users', JSON.stringify(updated));
-        }
-        return updated;
-      });
-      let nextMemberships: Record<string, string[]> | undefined = undefined;
-      if (input.assignedProjectIds && input.assignedProjectIds.length > 0) {
-        setMemberships((prev) => {
-          const updated = {
-            ...prev,
-            [newId]: input.assignedProjectIds!,
-          };
-          nextMemberships = updated;
-          if (typeof window !== 'undefined') {
-            localStorage.setItem('holabusiness_memberships', JSON.stringify(updated));
-          }
-          return updated;
-        });
-      }
+      upsertUserMut({
+        user: newUser,
+        assignedProjectIds: input.assignedProjectIds,
+      }).catch((e) => console.warn('User create error:', e));
 
-      // Immediately push to cloud so it NEVER disappears on refresh
-      if (typeof window !== 'undefined' && nextUsers.length > 0) {
-        const now = new Date().toISOString();
-        lastSyncedVersion.current = now;
-        fetch('/api/sync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            updates: {
-              users: nextUsers,
-              ...(nextMemberships ? { memberships: nextMemberships } : {}),
-            },
-          }),
-        }).catch((e) => console.warn('User create sync error:', e));
-
-        try {
-          syncChannelRef.current?.postMessage({
-            key: 'users',
-            data: nextUsers,
-            version: now,
-          });
-        } catch {}
-      }
       appendLog(
         projects[0]?.id || 'system',
         'SCOPE_UPDATED',
@@ -968,7 +774,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       );
       return newUser;
     },
-    [projects, appendLog]
+    [projects, upsertUserMut, appendLog]
   );
 
   const createAdminUser = useCallback(
@@ -985,21 +791,11 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
 
   const assignUserToProjects = useCallback(
     (userId: string, projectIds: string[]) => {
-      let nextMemberships: Record<string, string[]> = {};
-      setMemberships((prev) => {
-        const updated = {
-          ...prev,
-          [userId]: projectIds,
-        };
-        nextMemberships = updated;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_memberships', JSON.stringify(updated)); } catch {}
-        }
-        return updated;
-      });
-      instantSync({ memberships: nextMemberships });
+      setUserMembershipsMut({ userId, projectIds }).catch((e) =>
+        console.warn('Assign projects error:', e)
+      );
     },
-    []
+    [setUserMembershipsMut]
   );
 
   const updateUser = useCallback(
@@ -1013,55 +809,19 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         assignedProjectIds?: string[];
       }
     ) => {
-      let updatedUsersList: User[] = [];
-      setUsers((prev) => {
-        const updated = prev.map((u) => {
-          if (u.id === userId) {
-            return {
-              ...u,
-              name: updates.name.trim(),
-              email: updates.email.trim(),
-              title: updates.title !== undefined ? updates.title.trim() : u.title,
-              role: updates.role !== undefined ? updates.role : u.role,
-            };
-          }
-          return u;
-        });
-        updatedUsersList = updated;
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('holabusiness_users', JSON.stringify(updated));
-        }
-        return updated;
-      });
-
-      let updatedMembershipsObj: Record<string, string[]> | undefined = undefined;
-      if (updates.assignedProjectIds !== undefined) {
-        setMemberships((prev) => {
-          const updated = {
-            ...prev,
-            [userId]: updates.assignedProjectIds!,
-          };
-          updatedMembershipsObj = updated;
-          if (typeof window !== 'undefined') {
-            localStorage.setItem('holabusiness_memberships', JSON.stringify(updated));
-          }
-          return updated;
-        });
-      }
-
-      // Immediately push to cloud to prevent race condition revert
-      if (typeof window !== 'undefined' && updatedUsersList.length > 0) {
-        fetch('/api/sync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            updates: {
-              users: updatedUsersList,
-              ...(updatedMembershipsObj ? { memberships: updatedMembershipsObj } : {}),
-            },
-          }),
-        }).catch((e) => console.warn('User cloud sync error:', e));
-      }
+      const existing = users.find((u) => u.id === userId);
+      if (!existing) return;
+      const updatedUser: User = {
+        ...existing,
+        name: updates.name.trim(),
+        email: updates.email.trim(),
+        title: updates.title !== undefined ? updates.title.trim() : existing.title,
+        role: updates.role !== undefined ? updates.role : existing.role,
+      };
+      upsertUserMut({
+        user: updatedUser,
+        assignedProjectIds: updates.assignedProjectIds,
+      }).catch((e) => console.warn('User update error:', e));
 
       appendLog(
         projects[0]?.id || 'system',
@@ -1071,34 +831,18 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         `Updated account details for ${updates.name.trim()} (${updates.email.trim()})`
       );
     },
-    [projects, appendLog]
+    [users, projects, upsertUserMut, appendLog]
   );
 
   const changeUserPassword = useCallback(
     (userId: string, newPass: string) => {
-      let nextUsers: User[] = [];
-      setUsers((prev) => {
-        const updated = prev.map((u) => (u.id === userId ? { ...u, password: newPass.trim() } : u));
-        nextUsers = updated;
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('holabusiness_users', JSON.stringify(updated));
-        }
-        return updated;
-      });
-
-      if (typeof window !== 'undefined' && nextUsers.length > 0) {
-        const now = new Date().toISOString();
-        lastSyncedVersion.current = now;
-        fetch('/api/sync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            updates: { users: nextUsers },
-          }),
-        }).catch((e) => console.warn('Password change cloud sync error:', e));
-      }
+      const existing = users.find((u) => u.id === userId);
+      if (!existing) return;
+      upsertUserMut({
+        user: { ...existing, password: newPass.trim() },
+      }).catch((e) => console.warn('Password change error:', e));
     },
-    []
+    [users, upsertUserMut]
   );
 
   const toggleUserDisabled = useCallback(
@@ -1111,31 +855,10 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       if (target.is_main_admin || target.id === currentUser.id) {
         throw new Error('The Main Admin account cannot be disabled.');
       }
-
       const nextDisabled = !target.is_disabled;
-      let nextUsers: User[] = [];
-      setUsers((prev) => {
-        const updated = prev.map((u) =>
-          u.id === userId ? { ...u, is_disabled: nextDisabled } : u
-        );
-        nextUsers = updated;
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('holabusiness_users', JSON.stringify(updated));
-        }
-        return updated;
-      });
-
-      if (typeof window !== 'undefined' && nextUsers.length > 0) {
-        const now = new Date().toISOString();
-        lastSyncedVersion.current = now;
-        fetch('/api/sync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            updates: { users: nextUsers },
-          }),
-        }).catch((e) => console.warn('User toggle cloud sync error:', e));
-      }
+      upsertUserMut({
+        user: { ...target, is_disabled: nextDisabled },
+      }).catch((e) => console.warn('User toggle error:', e));
 
       appendLog(
         projects[0]?.id || 'system',
@@ -1145,7 +868,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         `${nextDisabled ? 'Disabled' : 'Re-activated'} admin account for ${target.name} (${target.email})`
       );
     },
-    [currentUser, users, projects, appendLog]
+    [currentUser, users, projects, upsertUserMut, appendLog]
   );
 
   const deleteUser = useCallback(
@@ -1158,36 +881,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       if (target.is_main_admin || target.id === currentUser.id) {
         throw new Error('The Main Admin account cannot be deleted.');
       }
-
-      let nextUsers: User[] = [];
-      setUsers((prev) => {
-        const updated = prev.filter((u) => u.id !== userId);
-        nextUsers = updated;
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('holabusiness_users', JSON.stringify(updated));
-        }
-        return updated;
-      });
-
-      if (typeof window !== 'undefined' && nextUsers.length > 0) {
-        const now = new Date().toISOString();
-        lastSyncedVersion.current = now;
-        fetch('/api/sync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            updates: { users: nextUsers },
-          }),
-        }).catch((e) => console.warn('User delete cloud sync error:', e));
-
-        try {
-          syncChannelRef.current?.postMessage({
-            key: 'users',
-            data: nextUsers,
-            version: now,
-          });
-        } catch {}
-      }
+      deleteUserMut({ userId }).catch((e) => console.warn('User delete error:', e));
 
       appendLog(
         projects[0]?.id || 'system',
@@ -1197,10 +891,9 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         `Permanently deleted admin account for ${target.name} (${target.email})`
       );
     },
-    [currentUser, users, projects, appendLog]
+    [currentUser, users, projects, deleteUserMut, appendLog]
   );
 
-  // 1. Create Project (Supports Discovery / Meetings / Draft intake)
   const createProject = useCallback(
     (input: CreateProjectInput): Project => {
       if (!permissions.canCreateProject) {
@@ -1245,62 +938,9 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         updated_at: now,
       };
 
-      let nextProjects: Project[] = [];
-      setProjects((prev) => {
-        const next = [newProject, ...prev];
-        nextProjects = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_projects', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-      let nextReqs: ProjectRequirement[] = [];
-      setRequirements((prev) => {
-        const next = [newReq, ...prev];
-        nextReqs = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_requirements', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-      let nextMemberships: Record<string, string[]> = {};
-      setMemberships((prev) => {
-        const next = { ...prev };
-        users.forEach((u) => {
-          if (u.role !== 'client') {
-            next[u.id] = Array.from(new Set([...(next[u.id] ?? []), projectId]));
-          }
-        });
-        nextMemberships = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_memberships', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-
-      if (typeof window !== 'undefined' && nextProjects.length > 0) {
-        const nowStr = new Date().toISOString();
-        lastSyncedVersion.current = nowStr;
-        fetch('/api/sync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            updates: {
-              projects: nextProjects,
-              requirements: nextReqs,
-              memberships: nextMemberships,
-            },
-          }),
-        }).catch((e) => console.warn('Project create sync error:', e));
-
-        try {
-          syncChannelRef.current?.postMessage({
-            key: 'projects',
-            data: nextProjects,
-            version: nowStr,
-          });
-        } catch {}
-      }
+      createProjectWithDetailsMut({ project: newProject, requirement: newReq }).catch((e) =>
+        console.warn('Project create error:', e)
+      );
 
       appendLog(
         projectId,
@@ -1317,10 +957,9 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
 
       return newProject;
     },
-    [permissions.canCreateProject, currentUser.id, projects, users, appendLog]
+    [permissions.canCreateProject, currentUser.id, projects, createProjectWithDetailsMut, appendLog]
   );
 
-  // 2. Contacts Management (Multiple contacts per project or unlinked business contacts)
   const addContact = useCallback(
     (input: CreateContactInput): ProjectContact => {
       const contactId = makeId('cnt');
@@ -1337,17 +976,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         can_access_portal: Boolean(input.can_access_portal ?? true),
         created_at: new Date().toISOString(),
       };
-
-      let nextContacts: ProjectContact[] = [];
-      setContacts((prev) => {
-        const next = [newContact, ...prev];
-        nextContacts = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_contacts', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-      instantSync({ contacts: nextContacts.length > 0 ? nextContacts : [newContact] });
+      createContactMut({ contact: newContact }).catch((e) => console.warn('Add contact error:', e));
       if (input.project_id) {
         appendLog(
           input.project_id,
@@ -1360,39 +989,25 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       }
       return newContact;
     },
-    [appendLog]
+    [createContactMut, appendLog]
   );
 
   const updateContact = useCallback(
     (contactId: string, updates: Partial<ProjectContact>) => {
-      let nextContacts: ProjectContact[] = [];
-      setContacts((prev) => {
-        const next = prev.map((c) => (c.id === contactId ? { ...c, ...updates } : c));
-        nextContacts = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_contacts', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-      instantSync({ contacts: nextContacts });
+      patchContactMut({ contactId, patch: updates }).catch((e) =>
+        console.warn('Update contact error:', e)
+      );
     },
-    []
+    [patchContactMut]
   );
 
-  const deleteContact = useCallback((contactId: string) => {
-    let nextContacts: ProjectContact[] = [];
-    setContacts((prev) => {
-      const next = prev.filter((c) => c.id !== contactId);
-      nextContacts = next;
-      if (typeof window !== 'undefined') {
-        try { localStorage.setItem('holabusiness_contacts', JSON.stringify(next)); } catch {}
-      }
-      return next;
-    });
-    instantSync({ contacts: nextContacts });
-  }, []);
+  const deleteContact = useCallback(
+    (contactId: string) => {
+      deleteContactMut({ contactId }).catch((e) => console.warn('Delete contact error:', e));
+    },
+    [deleteContactMut]
+  );
 
-  // 3. Meetings & Structured Pre-Sales Outcomes
   const createMeeting = useCallback(
     (input: CreateMeetingInput): ProjectMeeting => {
       const meetingId = makeId('meet');
@@ -1411,26 +1026,11 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         created_by: currentUser.id,
         created_at: now,
       };
-
-      let nextMeetings: ProjectMeeting[] = [];
-      setMeetings((prev) => {
-        const next = [newMeeting, ...prev];
-        nextMeetings = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_meetings', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-      if (!input.is_general_session) {
-        setProjects((prev) =>
-          prev.map((p) =>
-            p.id === input.project_id && p.status === 'Lead/Discovery'
-              ? { ...p, status: 'Meeting Scheduled', updated_at: now }
-              : p
-          )
-        );
-      }
-      instantSync({ meetings: nextMeetings });
+      createMeetingMut({
+        meeting: newMeeting,
+        advanceProjectToScheduled: !input.is_general_session ? input.project_id : undefined,
+        now,
+      }).catch((e) => console.warn('Create meeting error:', e));
 
       appendLog(
         input.project_id,
@@ -1442,42 +1042,25 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
           : `Scheduled meeting "${newMeeting.title}" for ${newMeeting.scheduled_at}`,
         { scheduled_at: newMeeting.scheduled_at, general: Boolean(input.is_general_session) }
       );
-
       return newMeeting;
     },
-    [currentUser.id, appendLog]
+    [currentUser.id, createMeetingMut, appendLog]
   );
 
   const updateMeeting = useCallback(
     (meetingId: string, updates: Partial<ProjectMeeting>) => {
-      let nextMeetings: ProjectMeeting[] = [];
-      setMeetings((prev) => {
-        const next = prev.map((m) => (m.id === meetingId ? { ...m, ...updates } : m));
-        nextMeetings = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_meetings', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-      instantSync({ meetings: nextMeetings });
+      patchMeetingMut({ meetingId, patch: updates }).catch((e) =>
+        console.warn('Update meeting error:', e)
+      );
     },
-    []
+    [patchMeetingMut]
   );
 
   const deleteMeeting = useCallback(
     (meetingId: string) => {
-      let nextMeetings: ProjectMeeting[] = [];
-      setMeetings((prev) => {
-        const next = prev.filter((m) => m.id !== meetingId);
-        nextMeetings = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_meetings', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-      instantSync({ meetings: nextMeetings });
+      deleteMeetingMut({ meetingId }).catch((e) => console.warn('Delete meeting error:', e));
     },
-    []
+    [deleteMeetingMut]
   );
 
   const recordMeetingOutcome = useCallback(
@@ -1488,78 +1071,44 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       const now = new Date().toISOString();
       const outcomeAt = input.outcome_at || now;
 
-      let nextMeetings2: ProjectMeeting[] = [];
-      setMeetings((prev) => {
-        const next = prev.map((m) =>
-          m.id === input.meeting_id
-            ? {
-                ...m,
-                outcome: input.outcome,
-                outcome_at: outcomeAt,
-                outcome_note: input.outcome_note || '',
-                next_action_at: input.reschedule_date || input.remainder_date,
-                decision_edited_by: input.is_edit ? currentUser.name : m.decision_edited_by,
-                decision_edited_at: input.is_edit ? now : m.decision_edited_at,
-              }
-            : m
+      patchMeetingMut({
+        meetingId: input.meeting_id,
+        patch: {
+          outcome: input.outcome,
+          outcome_at: outcomeAt,
+          outcome_note: input.outcome_note || '',
+          next_action_at: input.reschedule_date || input.remainder_date,
+          decision_edited_by: input.is_edit ? currentUser.name : existing.decision_edited_by,
+          decision_edited_at: input.is_edit ? now : existing.decision_edited_at,
+        },
+      }).catch((e) => console.warn('Record meeting outcome error:', e));
+
+      let projectPatch: Record<string, unknown> | null = null;
+      if (input.outcome === 'approved') {
+        projectPatch = { status: 'Proposal Review', draft_reason: null, updated_at: now };
+      } else if (input.outcome === 'denied') {
+        projectPatch = {
+          status: 'Draft / On Hold',
+          draft_reason: input.outcome_note || 'Meeting outcome: Denied by client.',
+          draft_source_stage: 'meeting',
+          updated_at: now,
+        };
+      } else if (input.outcome === 'remainder') {
+        projectPatch = {
+          status: 'Draft / On Hold',
+          draft_reason: input.outcome_note || 'Awaiting response. Remainder scheduled.',
+          draft_source_stage: 'meeting',
+          remainder_next_date: input.remainder_date || null,
+          updated_at: now,
+        };
+      } else if (input.outcome === 'rescheduled') {
+        projectPatch = { status: 'Meeting Scheduled', updated_at: now };
+      }
+      if (projectPatch) {
+        patchProjectMut({ projectId: existing.project_id, patch: projectPatch }).catch((e) =>
+          console.warn('Project outcome patch error:', e)
         );
-        nextMeetings2 = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_meetings', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-
-      // Transition project status according to outcome specification:
-      // Approved -> advances to 'Proposal Review'
-      // Denied -> moves to 'Draft / On Hold' with note
-      // Rescheduled -> remains 'Meeting Scheduled'
-      // Remainder -> moves to 'Draft / On Hold' with remainder reminder date
-      let nextProjects2: Project[] = [];
-      setProjects((prev) => {
-        const next: Project[] = prev.map((p) => {
-          if (p.id !== existing.project_id) return p;
-
-          if (input.outcome === 'approved') {
-            return {
-              ...p,
-              status: 'Proposal Review',
-              draft_reason: null,
-              updated_at: now,
-            };
-          } else if (input.outcome === 'denied') {
-            return {
-              ...p,
-              status: 'Draft / On Hold',
-              draft_reason: input.outcome_note || 'Meeting outcome: Denied by client.',
-              draft_source_stage: 'meeting',
-              updated_at: now,
-            };
-          } else if (input.outcome === 'remainder') {
-            return {
-              ...p,
-              status: 'Draft / On Hold',
-              draft_reason: input.outcome_note || 'Awaiting response. Remainder scheduled.',
-              draft_source_stage: 'meeting',
-              remainder_next_date: input.remainder_date || null,
-              updated_at: now,
-            };
-          } else if (input.outcome === 'rescheduled') {
-            return {
-              ...p,
-              status: 'Meeting Scheduled',
-              updated_at: now,
-            };
-          }
-          return p;
-        });
-        nextProjects2 = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_projects', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-      instantSync({ meetings: nextMeetings2, projects: nextProjects2 });
+      }
 
       appendLog(
         existing.project_id,
@@ -1583,10 +1132,9 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         }
       );
     },
-    [meetings, currentUser.name, appendLog]
+    [meetings, currentUser.name, patchMeetingMut, patchProjectMut, appendLog]
   );
 
-  // 3.5 Client Talk (Call, WhatsApp, Email, Meeting communications timeline)
   const addClientTalk = useCallback(
     (input: CreateClientTalkInput): ClientTalkRecord => {
       const talkId = makeId('talk');
@@ -1600,17 +1148,9 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         created_by: currentUser.id,
         created_at: now,
       };
-
-      let nextClientTalks: ClientTalkRecord[] = [];
-      setClientTalks((prev) => {
-        const next = [newTalk, ...prev];
-        nextClientTalks = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_client_talks', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-      instantSync({ clientTalks: nextClientTalks });
+      createClientTalkMut({ talk: newTalk }).catch((e) =>
+        console.warn('Add client talk error:', e)
+      );
       appendLog(
         input.project_id,
         'CLIENT_TALK_LOGGED',
@@ -1623,22 +1163,15 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       );
       return newTalk;
     },
-    [currentUser.id, appendLog]
+    [currentUser.id, createClientTalkMut, appendLog]
   );
 
   const updateClientTalk = useCallback(
     (talkId: string, updates: Partial<ClientTalkRecord>) => {
       const now = new Date().toISOString();
-      let nextClientTalks: ClientTalkRecord[] = [];
-      setClientTalks((prev) => {
-        const next = prev.map((t) => (t.id === talkId ? { ...t, ...updates, updated_at: now } : t));
-        nextClientTalks = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_client_talks', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-      instantSync({ clientTalks: nextClientTalks });
+      patchClientTalkMut({ talkId, patch: { ...updates, updated_at: now } }).catch((e) =>
+        console.warn('Update client talk error:', e)
+      );
       const existing = clientTalks.find((t) => t.id === talkId);
       if (existing) {
         appendLog(
@@ -1651,22 +1184,13 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         );
       }
     },
-    [clientTalks, appendLog]
+    [clientTalks, patchClientTalkMut, appendLog]
   );
 
   const deleteClientTalk = useCallback(
     (talkId: string) => {
       const existing = clientTalks.find((t) => t.id === talkId);
-      let nextClientTalks: ClientTalkRecord[] = [];
-      setClientTalks((prev) => {
-        const next = prev.filter((t) => t.id !== talkId);
-        nextClientTalks = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_client_talks', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-      instantSync({ clientTalks: nextClientTalks });
+      deleteClientTalkMut({ talkId }).catch((e) => console.warn('Delete client talk error:', e));
       if (existing) {
         appendLog(
           existing.project_id,
@@ -1678,10 +1202,9 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         );
       }
     },
-    [clientTalks, appendLog]
+    [clientTalks, deleteClientTalkMut, appendLog]
   );
 
-  // 4. Proposals (Template, Pricing Table, Outcome Actions)
   const createProposal = useCallback(
     (input: CreateProposalInput): ProjectProposal => {
       const proposalId = makeId('prop');
@@ -1725,21 +1248,9 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         updated_at: now,
       };
 
-      let nextProposals: ProjectProposal[] = [];
-      setProposals((prev) => {
-        const next = [newProposal, ...prev];
-        nextProposals = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_proposals', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-
-      // Auto-register proposal into the Documents repository as mandatory
       const safeTitle = input.title.toLowerCase().replace(/[^a-z0-9]+/g, '_');
-      const docId = makeId('doc');
       const autoDoc: ProjectDocument = {
-        id: docId,
+        id: makeId('doc'),
         project_id: input.project_id,
         title: input.title,
         doc_type: 'Proposal',
@@ -1751,16 +1262,10 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         uploaded_by: currentUser.id,
         created_at: now,
       };
-      let nextDocs: ProjectDocument[] = [];
-      setDocuments((prev) => {
-        const next = [autoDoc, ...prev];
-        nextDocs = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_documents', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-      instantSync({ proposals: nextProposals, documents: nextDocs });
+
+      createProposalWithDocMut({ proposal: newProposal, autoDoc }).catch((e) =>
+        console.warn('Create proposal error:', e)
+      );
 
       appendLog(
         input.project_id,
@@ -1770,46 +1275,26 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         `Created Proposal "${newProposal.title}" (Total: $${oneTime.toLocaleString()} + $${recurring.toLocaleString()}/mo)`,
         { total_one_time: oneTime, total_recurring: recurring }
       );
-
       return newProposal;
     },
-    [currentUser.id, appendLog]
+    [currentUser.id, createProposalWithDocMut, appendLog]
   );
 
   const updateProposal = useCallback(
     (proposalId: string, updates: Partial<ProjectProposal>) => {
-      let nextProposals: ProjectProposal[] = [];
-      setProposals((prev) => {
-        const next = prev.map((p) =>
-          p.id === proposalId
-            ? { ...p, ...updates, updated_at: new Date().toISOString() }
-            : p
-        );
-        nextProposals = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_proposals', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-      instantSync({ proposals: nextProposals });
+      patchProposalMut({
+        proposalId,
+        patch: { ...updates, updated_at: new Date().toISOString() },
+      }).catch((e) => console.warn('Update proposal error:', e));
     },
-    []
+    [patchProposalMut]
   );
 
   const deleteProposal = useCallback(
     (proposalId: string) => {
-      let nextProposals: ProjectProposal[] = [];
-      setProposals((prev) => {
-        const next = prev.filter((p) => p.id !== proposalId);
-        nextProposals = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_proposals', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-      instantSync({ proposals: nextProposals });
+      deleteProposalMut({ proposalId }).catch((e) => console.warn('Delete proposal error:', e));
     },
-    []
+    [deleteProposalMut]
   );
 
   const recordProposalOutcome = useCallback(
@@ -1820,71 +1305,46 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       const now = new Date().toISOString();
       const outcomeAt = input.outcome_at || now;
 
-      let nextProposals: ProjectProposal[] = [];
-      setProposals((prev) => {
-        const next = prev.map((p) =>
-          p.id === input.proposal_id
-            ? {
-                ...p,
-                status: input.outcome,
-                outcome_at: outcomeAt,
-                outcome_note: input.outcome_note || '',
-                next_review_meeting_at: input.reschedule_date || p.next_review_meeting_at,
-                updated_at: now,
-              }
-            : p
+      patchProposalMut({
+        proposalId: input.proposal_id,
+        patch: {
+          status: input.outcome,
+          outcome_at: outcomeAt,
+          outcome_note: input.outcome_note || '',
+          next_review_meeting_at: input.reschedule_date || existing.next_review_meeting_at,
+          updated_at: now,
+        },
+      }).catch((e) => console.warn('Record proposal outcome error:', e));
+
+      let projectPatch: Record<string, unknown> | null = null;
+      if (input.outcome === 'approved') {
+        projectPatch = {
+          status: 'In Execution',
+          draft_reason: null,
+          draft_source_stage: undefined,
+          updated_at: now,
+        };
+      } else if (input.outcome === 'denied') {
+        projectPatch = {
+          status: 'Draft / On Hold',
+          draft_reason: input.outcome_note || 'Proposal declined by client.',
+          draft_source_stage: 'proposal',
+          updated_at: now,
+        };
+      } else if (input.outcome === 'remainder') {
+        projectPatch = {
+          status: 'Draft / On Hold',
+          draft_reason: input.outcome_note || 'Proposal pending client review. Remainder active.',
+          draft_source_stage: 'proposal',
+          remainder_next_date: input.remainder_date || null,
+          updated_at: now,
+        };
+      }
+      if (projectPatch) {
+        patchProjectMut({ projectId: existing.project_id, patch: projectPatch }).catch((e) =>
+          console.warn('Proposal project patch error:', e)
         );
-        nextProposals = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_proposals', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-
-      // Proposal Outcome Routing:
-      // Approved -> enters main execution section ('In Execution' or 'Intake')
-      // Denied -> moves to 'Draft / On Hold' with reason note
-      // Remainder -> moves to 'Draft / On Hold' with remainder follow-up date
-      let nextProjects: Project[] = [];
-      setProjects((prev) => {
-        const next: Project[] = prev.map((p) => {
-          if (p.id !== existing.project_id) return p;
-
-          if (input.outcome === 'approved') {
-            return {
-              ...p,
-              status: 'In Execution',
-              draft_reason: null,
-              draft_source_stage: undefined,
-              updated_at: now,
-            };
-          } else if (input.outcome === 'denied') {
-            return {
-              ...p,
-              status: 'Draft / On Hold',
-              draft_reason: input.outcome_note || 'Proposal declined by client.',
-              draft_source_stage: 'proposal',
-              updated_at: now,
-            };
-          } else if (input.outcome === 'remainder') {
-            return {
-              ...p,
-              status: 'Draft / On Hold',
-              draft_reason: input.outcome_note || 'Proposal pending client review. Remainder active.',
-              draft_source_stage: 'proposal',
-              remainder_next_date: input.remainder_date || null,
-              updated_at: now,
-            };
-          }
-          return p;
-        });
-        nextProjects = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_projects', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-      instantSync({ proposals: nextProposals, projects: nextProjects });
+      }
 
       appendLog(
         existing.project_id,
@@ -1894,17 +1354,12 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         `Proposal outcome recorded: ${input.outcome.toUpperCase()}${
           input.outcome_note ? ` — "${input.outcome_note}"` : ''
         }`,
-        {
-          outcome: input.outcome,
-          outcome_at: outcomeAt,
-          note: input.outcome_note,
-        }
+        { outcome: input.outcome, outcome_at: outcomeAt, note: input.outcome_note }
       );
     },
-    [proposals, appendLog]
+    [proposals, patchProposalMut, patchProjectMut, appendLog]
   );
 
-  // 5. Reopen Project from Drafts (Resume right where it was stopped)
   const reopenDraftProject = useCallback(
     (
       projectId: string,
@@ -1912,40 +1367,27 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       note?: string
     ) => {
       const now = new Date().toISOString();
-      let nextProjects: Project[] = [];
-      setProjects((prev) => {
-        const next = prev.map((p) =>
-          p.id === projectId
-            ? {
-                ...p,
-                status: targetStage,
-                draft_reason: null,
-                draft_source_stage: undefined,
-                remainder_next_date: null,
-                updated_at: now,
-              }
-            : p
-        );
-        nextProjects = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_projects', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-      instantSync({ projects: nextProjects });
+      patchProjectMut({
+        projectId,
+        patch: {
+          status: targetStage,
+          draft_reason: null,
+          draft_source_stage: undefined,
+          remainder_next_date: null,
+          updated_at: now,
+        },
+      }).catch((e) => console.warn('Reopen draft error:', e));
 
       appendLog(
         projectId,
         'PROJECT_REOPENED_FROM_DRAFT',
         'project',
         projectId,
-        `Reopened project from Drafts into stage "${targetStage}"${
-          note ? ` (${note})` : ''
-        }`,
+        `Reopened project from Drafts into stage "${targetStage}"${note ? ` (${note})` : ''}`,
         { target_stage: targetStage, note }
       );
     },
-    [appendLog]
+    [patchProjectMut, appendLog]
   );
 
   const updateProjectStatus = useCallback(
@@ -1953,28 +1395,19 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       if (currentUser.role !== 'admin') {
         throw new Error('Only Administrators can change project lifecycle status.');
       }
+      const existing = projects.find((p) => p.id === projectId);
       const now = new Date().toISOString();
       const isCompleted = newStatus === 'Completed' || newStatus === 'Completed/Archived';
-      let nextProjects: Project[] = [];
-      setProjects((prev) => {
-        const next = prev.map((p) =>
-          p.id === projectId
-            ? {
-                ...p,
-                status: newStatus,
-                is_archived: isCompleted,
-                actual_end_date: isCompleted ? p.actual_end_date || now.split('T')[0] : p.actual_end_date,
-                updated_at: now,
-              }
-            : p
-        );
-        nextProjects = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_projects', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-      instantSync({ projects: nextProjects });
+
+      patchProjectMut({
+        projectId,
+        patch: {
+          status: newStatus,
+          is_archived: isCompleted,
+          actual_end_date: isCompleted ? existing?.actual_end_date || now.split('T')[0] : existing?.actual_end_date,
+          updated_at: now,
+        },
+      }).catch((e) => console.warn('Project status update error:', e));
 
       appendLog(
         projectId,
@@ -1985,124 +1418,14 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         { status: newStatus }
       );
     },
-    [currentUser.role, appendLog]
+    [currentUser.role, projects, patchProjectMut, appendLog]
   );
 
   const deleteProject = useCallback(
     (projectId: string) => {
-      let nextProjects: Project[] = [];
-      let nextTasks: Task[] = [];
-      let nextClientTalks: ClientTalkRecord[] = [];
-      let nextMeetings: ProjectMeeting[] = [];
-      let nextProposals: ProjectProposal[] = [];
-      let nextAssets: ProjectAsset[] = [];
-      let nextCredentials: ProjectCredential[] = [];
-      let nextRenewals: RenewalItem[] = [];
-      let nextRequirements: ProjectRequirement[] = [];
-      let nextDocuments: ProjectDocument[] = [];
-      let nextLogs: ActivityLog[] = [];
-      let nextContacts: ProjectContact[] = [];
-
-      setProjects((prev) => {
-        nextProjects = prev.filter((p) => p.id !== projectId);
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_projects', JSON.stringify(nextProjects)); } catch {}
-        }
-        return nextProjects;
-      });
-      setTasks((prev) => {
-        nextTasks = prev.filter((t) => t.project_id !== projectId);
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_tasks', JSON.stringify(nextTasks)); } catch {}
-        }
-        return nextTasks;
-      });
-      setClientTalks((prev) => {
-        nextClientTalks = prev.filter((t) => t.project_id !== projectId);
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_client_talks', JSON.stringify(nextClientTalks)); } catch {}
-        }
-        return nextClientTalks;
-      });
-      setMeetings((prev) => {
-        nextMeetings = prev.filter((m) => m.project_id !== projectId);
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_meetings', JSON.stringify(nextMeetings)); } catch {}
-        }
-        return nextMeetings;
-      });
-      setProposals((prev) => {
-        nextProposals = prev.filter((p) => p.project_id !== projectId);
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_proposals', JSON.stringify(nextProposals)); } catch {}
-        }
-        return nextProposals;
-      });
-      setAssets((prev) => {
-        nextAssets = prev.filter((a) => a.project_id !== projectId);
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_assets', JSON.stringify(nextAssets)); } catch {}
-        }
-        return nextAssets;
-      });
-      setCredentials((prev) => {
-        nextCredentials = prev.filter((c) => c.project_id !== projectId);
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_credentials', JSON.stringify(nextCredentials)); } catch {}
-        }
-        return nextCredentials;
-      });
-      setRenewals((prev) => {
-        nextRenewals = prev.filter((r) => r.project_id !== projectId);
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_renewals', JSON.stringify(nextRenewals)); } catch {}
-        }
-        return nextRenewals;
-      });
-      setRequirements((prev) => {
-        nextRequirements = prev.filter((r) => r.project_id !== projectId);
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_requirements', JSON.stringify(nextRequirements)); } catch {}
-        }
-        return nextRequirements;
-      });
-      setDocuments((prev) => {
-        nextDocuments = prev.filter((d) => d.project_id !== projectId);
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_documents', JSON.stringify(nextDocuments)); } catch {}
-        }
-        return nextDocuments;
-      });
-      setActivityLogs((prev) => {
-        nextLogs = prev.filter((l) => l.project_id !== projectId);
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_activity_logs', JSON.stringify(nextLogs)); } catch {}
-        }
-        return nextLogs;
-      });
-      setContacts((prev) => {
-        nextContacts = prev.filter((c) => c.project_id !== projectId);
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_contacts', JSON.stringify(nextContacts)); } catch {}
-        }
-        return nextContacts;
-      });
-
-      instantSync({
-        projects: nextProjects,
-        tasks: nextTasks,
-        clientTalks: nextClientTalks,
-        meetings: nextMeetings,
-        proposals: nextProposals,
-        assets: nextAssets,
-        credentials: nextCredentials,
-        renewals: nextRenewals,
-        requirements: nextRequirements,
-        documents: nextDocuments,
-        activityLogs: nextLogs,
-        contacts: nextContacts,
-      });
-
+      deleteProjectCascadeMut({ projectId }).catch((e) =>
+        console.warn('Delete project error:', e)
+      );
       appendLog(
         projectId,
         'PROJECT_DELETED',
@@ -2112,10 +1435,9 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         { projectId }
       );
     },
-    [appendLog]
+    [deleteProjectCascadeMut, appendLog]
   );
 
-  // 6. Documents Management (Mandatory proposals, contracts, SOWs, NDAs)
   const uploadDocument = useCallback(
     (input: UploadDocumentInput): ProjectDocument => {
       const docId = makeId('doc');
@@ -2132,17 +1454,9 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         uploaded_by: currentUser.id,
         created_at: new Date().toISOString(),
       };
-
-      let nextDocs: ProjectDocument[] = [];
-      setDocuments((prev) => {
-        const next = [newDoc, ...prev];
-        nextDocs = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_documents', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-      instantSync({ documents: nextDocs });
+      createDocumentMut({ document: newDoc }).catch((e) =>
+        console.warn('Upload doc error:', e)
+      );
       appendLog(
         input.project_id,
         'DOCUMENT_UPLOADED',
@@ -2153,7 +1467,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       );
       return newDoc;
     },
-    [currentUser.id, appendLog]
+    [currentUser.id, createDocumentMut, appendLog]
   );
 
   const toggleDocumentSignOff = useCallback(
@@ -2161,18 +1475,9 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       const target = documents.find((d) => d.id === docId);
       if (!target) return;
       const nextSign = !target.is_signed_off;
-
-      let nextDocs: ProjectDocument[] = [];
-      setDocuments((prev) => {
-        const next = prev.map((d) => (d.id === docId ? { ...d, is_signed_off: nextSign } : d));
-        nextDocs = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_documents', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-      instantSync({ documents: nextDocs });
-
+      patchDocumentMut({ docId, patch: { is_signed_off: nextSign } }).catch((e) =>
+        console.warn('Toggle doc signoff error:', e)
+      );
       appendLog(
         target.project_id,
         'CLIENT_SIGN_OFF',
@@ -2182,10 +1487,9 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         { signed_off: nextSign }
       );
     },
-    [documents, appendLog]
+    [documents, patchDocumentMut, appendLog]
   );
 
-  // Existing Step 4 Mutations
   const updateRequirements = useCallback(
     (
       projectId: string,
@@ -2202,27 +1506,16 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       const prevReq = requirements.find((r) => r.project_id === projectId);
       const now = new Date().toISOString();
 
-      let nextReqs: ProjectRequirement[] = [];
-      setRequirements((prev) => {
-        const next = prev.map((r) =>
-          r.project_id === projectId
-            ? {
-                ...r,
-                scope_summary: updates.scope_summary,
-                out_of_scope_notes: updates.out_of_scope_notes,
-                deliverables_json: updates.deliverables_json,
-                updated_by: currentUser.id,
-                updated_at: now,
-              }
-            : r
-        );
-        nextReqs = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_requirements', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-      instantSync({ requirements: nextReqs });
+      patchRequirementMut({
+        projectId,
+        patch: {
+          scope_summary: updates.scope_summary,
+          out_of_scope_notes: updates.out_of_scope_notes,
+          deliverables_json: updates.deliverables_json,
+          updated_by: currentUser.id,
+          updated_at: now,
+        },
+      }).catch((e) => console.warn('Update requirements error:', e));
 
       appendLog(
         projectId,
@@ -2237,7 +1530,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         }
       );
     },
-    [projects, permissions.canEditScope, requirements, currentUser.id, appendLog]
+    [projects, permissions.canEditScope, requirements, currentUser.id, patchRequirementMut, appendLog]
   );
 
   const addAsset = useCallback(
@@ -2257,17 +1550,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         created_at: now,
         updated_at: now,
       };
-
-      let nextAssets: ProjectAsset[] = [];
-      setAssets((prev) => {
-        const next = [newAsset, ...prev];
-        nextAssets = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_assets', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-      instantSync({ assets: nextAssets });
+      createAssetMut({ asset: newAsset }).catch((e) => console.warn('Add asset error:', e));
       appendLog(
         input.project_id,
         'ASSET_UPLOADED',
@@ -2278,7 +1561,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       );
       return newAsset;
     },
-    [currentUser.id, appendLog]
+    [currentUser.id, createAssetMut, appendLog]
   );
 
   const updateAsset = useCallback(
@@ -2286,30 +1569,18 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       const target = assets.find((a) => a.id === input.asset_id);
       if (!target) return;
       const now = new Date().toISOString();
-
-      let nextAssets: ProjectAsset[] = [];
-      setAssets((prev) => {
-        const next = prev.map((a) =>
-          a.id === input.asset_id
-            ? {
-                ...a,
-                name: input.name.trim(),
-                doc_type: input.doc_type,
-                drive_link: input.drive_link.trim(),
-                notes: input.notes?.trim() || null,
-                file_name: input.name.trim(),
-                file_url: input.drive_link.trim(),
-                updated_at: now,
-              }
-            : a
-        );
-        nextAssets = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_assets', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-      instantSync({ assets: nextAssets });
+      patchAssetMut({
+        assetId: input.asset_id,
+        patch: {
+          name: input.name.trim(),
+          doc_type: input.doc_type,
+          drive_link: input.drive_link.trim(),
+          notes: input.notes?.trim() || null,
+          file_name: input.name.trim(),
+          file_url: input.drive_link.trim(),
+          updated_at: now,
+        },
+      }).catch((e) => console.warn('Update asset error:', e));
 
       appendLog(
         target.project_id,
@@ -2320,24 +1591,14 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         { doc_type: input.doc_type, drive_link: input.drive_link }
       );
     },
-    [assets, appendLog]
+    [assets, patchAssetMut, appendLog]
   );
 
   const deleteAsset = useCallback(
     (assetId: string) => {
       const target = assets.find((a) => a.id === assetId);
       if (!target) return;
-
-      let nextAssets: ProjectAsset[] = [];
-      setAssets((prev) => {
-        const next = prev.filter((a) => a.id !== assetId);
-        nextAssets = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_assets', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-      instantSync({ assets: nextAssets });
+      deleteAssetMut({ assetId }).catch((e) => console.warn('Delete asset error:', e));
       appendLog(
         target.project_id,
         'ASSET_DELETED',
@@ -2347,7 +1608,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         { name: target.name || target.file_name, doc_type: target.doc_type }
       );
     },
-    [assets, appendLog]
+    [assets, deleteAssetMut, appendLog]
   );
 
   const uploadAsset = useCallback(
@@ -2378,31 +1639,17 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         uploaded_by: currentUser.id,
         created_at: new Date().toISOString(),
       };
-
-      let nextAssets: ProjectAsset[] = [];
-      setAssets((prev) => {
-        const next = [newAsset, ...prev];
-        nextAssets = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_assets', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-      instantSync({ assets: nextAssets });
+      createAssetMut({ asset: newAsset }).catch((e) => console.warn('Upload asset error:', e));
       appendLog(
         input.project_id,
         'ASSET_UPLOADED',
         'asset',
         assetId,
         `Uploaded "${newAsset.file_name}" (${newAsset.version_tag}) to ${newAsset.folder_category}`,
-        {
-          folder: newAsset.folder_category,
-          version: newAsset.version_tag,
-          file_size: newAsset.file_size,
-        }
+        { folder: newAsset.folder_category, version: newAsset.version_tag, file_size: newAsset.file_size }
       );
     },
-    [projects, permissions.canUploadAssets, currentUser.id, appendLog]
+    [projects, permissions.canUploadAssets, currentUser.id, createAssetMut, appendLog]
   );
 
   const toggleAssetApproval = useCallback(
@@ -2414,19 +1661,9 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       if (!target) return;
       const nextApproved = !target.client_approved;
 
-      let nextAssets: ProjectAsset[] = [];
-      setAssets((prev) => {
-        const next = prev.map((a) =>
-          a.id === assetId ? { ...a, client_approved: nextApproved } : a
-        );
-        nextAssets = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_assets', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-      instantSync({ assets: nextAssets });
-
+      patchAssetMut({ assetId, patch: { client_approved: nextApproved } }).catch((e) =>
+        console.warn('Toggle asset approval error:', e)
+      );
       appendLog(
         projectId,
         'ASSET_APPROVED',
@@ -2436,7 +1673,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         { client_approved: nextApproved }
       );
     },
-    [projects, permissions.canEditScope, assets, appendLog]
+    [projects, permissions.canEditScope, assets, patchAssetMut, appendLog]
   );
 
   const addCredential = useCallback(
@@ -2472,17 +1709,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         updated_by: currentUser.id,
         updated_at: new Date().toISOString(),
       };
-
-      let nextCreds: ProjectCredential[] = [];
-      setCredentials((prev) => {
-        const next = [newCred, ...prev];
-        nextCreds = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_credentials', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-      instantSync({ credentials: nextCreds });
+      await createCredentialMut({ credential: newCred });
       appendLog(
         input.project_id,
         'CREDENTIAL_ADDED',
@@ -2492,7 +1719,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         { service_name: newCred.service_name }
       );
     },
-    [projects, permissions.canManageCredentials, currentUser.id, appendLog]
+    [projects, permissions.canManageCredentials, currentUser.id, createCredentialMut, appendLog]
   );
 
   const revealCredential = useCallback(
@@ -2528,7 +1755,6 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         `${currentUser.name} viewed credential "${cred.service_name}"`,
         { service_name: cred.service_name, actor: currentUser.email }
       );
-
       return plaintext as string;
     },
     [permissions.canRevealCredentials, credentials, currentUser, appendLog]
@@ -2540,7 +1766,6 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       if (!proj || proj.is_archived || !permissions.canManageCredentials) {
         throw new Error('RBAC: Cannot manage credentials.');
       }
-
       const existing = credentials.find(
         (c) => c.id === input.credential_id && c.project_id === input.project_id
       );
@@ -2566,32 +1791,21 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         auth_tag = encryptedData.auth_tag;
       }
 
-      let nextCreds: ProjectCredential[] = [];
-      setCredentials((prev) => {
-        const next = prev.map((c) =>
-          c.id === input.credential_id
-            ? {
-                ...c,
-                service_name: input.service_name.trim(),
-                category: input.category || c.category || 'Other',
-                login_url: input.login_url?.trim() || null,
-                username: input.username.trim(),
-                encrypted_secret,
-                iv,
-                auth_tag,
-                notes: input.notes?.trim() || null,
-                updated_by: currentUser.id,
-                updated_at: new Date().toISOString(),
-              }
-            : c
-        );
-        nextCreds = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_credentials', JSON.stringify(next)); } catch {}
-        }
-        return next;
+      await patchCredentialMut({
+        credentialId: input.credential_id,
+        patch: {
+          service_name: input.service_name.trim(),
+          category: input.category || existing.category || 'Other',
+          login_url: input.login_url?.trim() || null,
+          username: input.username.trim(),
+          encrypted_secret,
+          iv,
+          auth_tag,
+          notes: input.notes?.trim() || null,
+          updated_by: currentUser.id,
+          updated_at: new Date().toISOString(),
+        },
       });
-      instantSync({ credentials: nextCreds });
 
       appendLog(
         input.project_id,
@@ -2602,7 +1816,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         { service_name: input.service_name }
       );
     },
-    [projects, permissions.canManageCredentials, credentials, currentUser.id, appendLog]
+    [projects, permissions.canManageCredentials, credentials, currentUser.id, patchCredentialMut, appendLog]
   );
 
   const deleteCredential = useCallback(
@@ -2614,16 +1828,9 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       const existing = credentials.find(
         (c) => c.id === credentialId && c.project_id === projectId
       );
-      let nextCreds: ProjectCredential[] = [];
-      setCredentials((prev) => {
-        const next = prev.filter((c) => c.id !== credentialId);
-        nextCreds = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_credentials', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-      instantSync({ credentials: nextCreds });
+      deleteCredentialMut({ credentialId }).catch((e) =>
+        console.warn('Delete credential error:', e)
+      );
       appendLog(
         projectId,
         'CREDENTIAL_DELETED',
@@ -2633,7 +1840,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         { service_name: existing?.service_name }
       );
     },
-    [projects, permissions.canManageCredentials, credentials, appendLog]
+    [projects, permissions.canManageCredentials, credentials, deleteCredentialMut, appendLog]
   );
 
   const createTask = useCallback(
@@ -2652,9 +1859,8 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         todayDate
       );
 
-      const effectiveAssigneeId = currentUser.role === 'admin'
-        ? (input.assignee_id || null)
-        : currentUser.id;
+      const effectiveAssigneeId =
+        currentUser.role === 'admin' ? input.assignee_id || null : currentUser.id;
 
       const newTask: Task = {
         id: taskId,
@@ -2675,44 +1881,15 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         updated_at: now,
       };
 
-      let nextTasks: Task[] = [];
-      setTasks((prev) => {
-        const next = [newTask, ...prev];
-        nextTasks = next;
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('holabusiness_tasks', JSON.stringify(next));
-        }
-        return next;
-      });
-
-      if (typeof window !== 'undefined' && nextTasks.length > 0) {
-        const nowStr = new Date().toISOString();
-        lastSyncedVersion.current = nowStr;
-        fetch('/api/sync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            updates: { tasks: nextTasks },
-          }),
-        }).catch((e) => console.warn('Task create sync error:', e));
-
-        try {
-          syncChannelRef.current?.postMessage({
-            key: 'tasks',
-            data: nextTasks,
-            version: nowStr,
-          });
-        } catch {}
-      }
+      createTaskMut({ task: newTask }).catch((e) => console.warn('Create task error:', e));
 
       if (effectiveAssigneeId) {
-        setMemberships((prev) => ({
-          ...prev,
-          [effectiveAssigneeId]: Array.from(
-            new Set([...(prev[effectiveAssigneeId] ?? []), input.project_id])
-          ),
-        }));
+        addProjectToUserMembershipMut({
+          userId: effectiveAssigneeId,
+          projectId: input.project_id,
+        }).catch(() => {});
       }
+
       appendLog(
         input.project_id,
         'TASK_CREATED',
@@ -2722,7 +1899,15 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         { status: newTask.status, priority: newTask.priority, due_date: newTask.due_date }
       );
     },
-    [projects, permissions.canManageTasks, todayDate, currentUser, appendLog]
+    [
+      projects,
+      permissions.canManageTasks,
+      todayDate,
+      currentUser,
+      createTaskMut,
+      addProjectToUserMembershipMut,
+      appendLog,
+    ]
   );
 
   const updateTask = useCallback(
@@ -2733,80 +1918,51 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       const existing = tasks.find((t) => t.id === taskId);
       if (!existing) return;
 
-      // Option A strict check: Employees can only edit their own tasks
       if (currentUser.role !== 'admin' && existing.assignee_id !== currentUser.id) {
         return;
       }
 
-      const effectiveAssigneeId = currentUser.role === 'admin'
-        ? (input.assignee_id !== undefined ? input.assignee_id : existing.assignee_id)
-        : existing.assignee_id;
+      const effectiveAssigneeId =
+        currentUser.role === 'admin'
+          ? input.assignee_id !== undefined
+            ? input.assignee_id
+            : existing.assignee_id
+          : existing.assignee_id;
 
       const now = new Date().toISOString();
-      const completedAt = input.status === 'Done' ? (existing.completed_at || now) : null;
+      const completedAt = input.status === 'Done' ? existing.completed_at || now : null;
       const delayInfo = getTaskDelayInfo(
         { due_date: input.due_date, status: input.status, completed_at: completedAt },
         todayDate
       );
 
-      let nextUpdatedTasks: Task[] = [];
-      setTasks((prev) => {
-        const next = prev.map((t) =>
-          t.id === taskId
-            ? {
-                ...t,
-                title: input.title.trim(),
-                description: input.description?.trim() ?? '',
-                assignee_id: effectiveAssigneeId || null,
-                priority: input.priority,
-                status: input.status,
-                due_date: input.due_date,
-                completed_at: completedAt,
-                is_delayed: delayInfo.isDelayed,
-                blocked_by_task_id: input.blocked_by_task_id || null,
-                linked_deliverable: input.linked_deliverable || null,
-                deliverable_url:
-                  input.deliverable_url !== undefined
-                    ? (input.deliverable_url?.trim() || null)
-                    : t.deliverable_url,
-                is_edited: true,
-                updated_at: now,
-              }
-            : t
-        );
-        nextUpdatedTasks = next;
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('holabusiness_tasks', JSON.stringify(next));
-        }
-        return next;
-      });
-
-      if (typeof window !== 'undefined' && nextUpdatedTasks.length > 0) {
-        lastSyncedVersion.current = now;
-        fetch('/api/sync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            updates: { tasks: nextUpdatedTasks },
-          }),
-        }).catch((e) => console.warn('Task update sync error:', e));
-
-        try {
-          syncChannelRef.current?.postMessage({
-            key: 'tasks',
-            data: nextUpdatedTasks,
-            version: now,
-          });
-        } catch {}
-      }
+      patchTaskMut({
+        taskId,
+        patch: {
+          title: input.title.trim(),
+          description: input.description?.trim() ?? '',
+          assignee_id: effectiveAssigneeId || null,
+          priority: input.priority,
+          status: input.status,
+          due_date: input.due_date,
+          completed_at: completedAt,
+          is_delayed: delayInfo.isDelayed,
+          blocked_by_task_id: input.blocked_by_task_id || null,
+          linked_deliverable: input.linked_deliverable || null,
+          deliverable_url:
+            input.deliverable_url !== undefined
+              ? input.deliverable_url?.trim() || null
+              : existing.deliverable_url,
+          is_edited: true,
+          updated_at: now,
+        },
+      }).catch((e) => console.warn('Update task error:', e));
 
       if (effectiveAssigneeId) {
-        setMemberships((prev) => ({
-          ...prev,
-          [effectiveAssigneeId]: Array.from(
-            new Set([...(prev[effectiveAssigneeId] ?? []), projectId])
-          ),
-        }));
+        addProjectToUserMembershipMut({
+          userId: effectiveAssigneeId,
+          projectId,
+        }).catch(() => {});
       }
 
       appendLog(
@@ -2818,7 +1974,16 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         { title: input.title, status: input.status, priority: input.priority, due_date: input.due_date }
       );
     },
-    [projects, permissions.canManageTasks, tasks, todayDate, currentUser, appendLog]
+    [
+      projects,
+      permissions.canManageTasks,
+      tasks,
+      todayDate,
+      currentUser,
+      patchTaskMut,
+      addProjectToUserMembershipMut,
+      appendLog,
+    ]
   );
 
   const deleteTask = useCallback(
@@ -2829,47 +1994,11 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       const existing = tasks.find((t) => t.id === taskId);
       if (!existing) return;
 
-      // Option A strict check: Employees can only delete their own tasks
       if (currentUser.role !== 'admin' && existing.assignee_id !== currentUser.id) {
         return;
       }
 
-      let nextTasksAfterDelete: Task[] = [];
-      setTasks((prev) => {
-        const next = prev
-          .filter((t) => t.id !== taskId)
-          .map((t) =>
-            t.blocked_by_task_id === taskId
-              ? { ...t, blocked_by_task_id: null }
-              : t
-          );
-        nextTasksAfterDelete = next;
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('holabusiness_tasks', JSON.stringify(next));
-        }
-        return next;
-      });
-
-      if (typeof window !== 'undefined') {
-        const nowStr = new Date().toISOString();
-        lastSyncedVersion.current = nowStr;
-        fetch('/api/sync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            updates: { tasks: nextTasksAfterDelete },
-          }),
-        }).catch((e) => console.warn('Task delete sync error:', e));
-
-        try {
-          syncChannelRef.current?.postMessage({
-            key: 'tasks',
-            data: nextTasksAfterDelete,
-            version: nowStr,
-          });
-        } catch {}
-      }
-
+      deleteTaskMut({ taskId }).catch((e) => console.warn('Delete task error:', e));
       appendLog(
         projectId,
         'SCOPE_UPDATED',
@@ -2878,7 +2007,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         `Deleted task "${existing.title}"`
       );
     },
-    [projects, permissions.canManageTasks, tasks, currentUser, appendLog]
+    [projects, permissions.canManageTasks, tasks, currentUser, deleteTaskMut, appendLog]
   );
 
   const reorderTasks = useCallback(
@@ -2894,94 +2023,63 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       const sourceTask = tasks.find((t) => t.id === sourceTaskId);
       if (!sourceTask) return;
 
-      // Option A strict check: Employees can only reorder their own tasks
       if (currentUser.role !== 'admin' && sourceTask.assignee_id !== currentUser.id) {
         return;
       }
 
       const now = new Date().toISOString();
-      const completedAt = targetStatus === 'Done' ? (sourceTask.completed_at || now) : null;
+      const completedAt = targetStatus === 'Done' ? sourceTask.completed_at || now : null;
       const delayInfo = getTaskDelayInfo(
         { due_date: sourceTask.due_date, status: targetStatus, completed_at: completedAt },
         todayDate
       );
 
-      let nextTasks: Task[] = [];
-      setTasks((prev) => {
-        const sourceIndex = prev.findIndex((t) => t.id === sourceTaskId);
-        const withoutSource = prev.filter((t) => t.id !== sourceTaskId);
-        const updatedSource: Task = {
-          ...sourceTask,
+      const sourceIndex = tasks.findIndex((t) => t.id === sourceTaskId);
+      const withoutSource = tasks.filter((t) => t.id !== sourceTaskId);
+      const updatedSource: Task = {
+        ...sourceTask,
+        status: targetStatus,
+        completed_at: completedAt,
+        is_delayed: delayInfo.isDelayed,
+        updated_at: now,
+      };
+
+      let nextTasks: Task[];
+      if (!targetTaskId) {
+        const lastIdx = withoutSource.findLastIndex(
+          (t) => t.project_id === projectId && t.status === targetStatus
+        );
+        if (lastIdx === -1) {
+          nextTasks = [...withoutSource, updatedSource];
+        } else {
+          const copy = [...withoutSource];
+          copy.splice(lastIdx + 1, 0, updatedSource);
+          nextTasks = copy;
+        }
+      } else {
+        const targetIndex = withoutSource.findIndex((t) => t.id === targetTaskId);
+        if (targetIndex === -1) {
+          nextTasks = [...withoutSource, updatedSource];
+        } else {
+          const isSameColumn = sourceTask.status === targetStatus;
+          const insertIndex =
+            isSameColumn && sourceIndex < targetIndex ? targetIndex + 1 : targetIndex;
+          const copy = [...withoutSource];
+          copy.splice(insertIndex, 0, updatedSource);
+          nextTasks = copy;
+        }
+      }
+
+      reorderTasksMut({
+        orderedTaskIds: nextTasks.map((t) => t.id),
+        movedTaskId: sourceTaskId,
+        movedTaskPatch: {
           status: targetStatus,
           completed_at: completedAt,
           is_delayed: delayInfo.isDelayed,
           updated_at: now,
-        };
-
-        if (!targetTaskId) {
-          // If dropped on column without specific target task, find last task in this column
-          const lastIdx = withoutSource.findLastIndex(
-            (t) => t.project_id === projectId && t.status === targetStatus
-          );
-          if (lastIdx === -1) {
-            nextTasks = [...withoutSource, updatedSource];
-            return nextTasks;
-          }
-          const copy = [...withoutSource];
-          copy.splice(lastIdx + 1, 0, updatedSource);
-          nextTasks = copy;
-          return copy;
-        }
-
-        const targetIndex = withoutSource.findIndex((t) => t.id === targetTaskId);
-        if (targetIndex === -1) {
-          nextTasks = [...withoutSource, updatedSource];
-          return nextTasks;
-        }
-
-        // If dragging downwards within same column, insert after target
-        const isSameColumn = sourceTask.status === targetStatus;
-        const insertIndex = isSameColumn && sourceIndex < targetIndex
-          ? targetIndex + 1
-          : targetIndex;
-
-        const copy = [...withoutSource];
-        copy.splice(insertIndex, 0, updatedSource);
-        nextTasks = copy;
-        return copy;
-      });
-
-      if (nextTasks.length > 0) {
-        lastLocalActionTime.current = Date.now();
-        lastSyncedVersion.current = now;
-        fetch('/api/sync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            updates: { tasks: nextTasks },
-          }),
-        })
-          .then((res) => res.json())
-          .then((data) => {
-            if (data?.timestamp) {
-              lastSyncedVersion.current = String(data.timestamp);
-            }
-          })
-          .catch((e) => console.warn('Reorder sync error:', e));
-
-        try {
-          syncChannelRef.current?.postMessage({
-            key: 'tasks',
-            data: nextTasks,
-            version: now,
-          });
-        } catch {}
-        if (typeof window !== 'undefined') {
-          try {
-            localStorage.setItem('holabusiness_tasks', JSON.stringify(nextTasks));
-          } catch {}
-        }
-      }
+        },
+      }).catch((e) => console.warn('Reorder tasks error:', e));
 
       if (sourceTask.status !== targetStatus) {
         appendLog(
@@ -2993,7 +2091,15 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         );
       }
     },
-    [projects, permissions.canUpdateTaskStatus, tasks, todayDate, currentUser, appendLog]
+    [
+      projects,
+      permissions.canUpdateTaskStatus,
+      tasks,
+      todayDate,
+      currentUser,
+      reorderTasksMut,
+      appendLog,
+    ]
   );
 
   const updateTaskStatus = useCallback(
@@ -3004,7 +2110,6 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       const existing = tasks.find((t) => t.id === taskId);
       if (!existing || existing.status === status) return;
 
-      // Option A strict check: Employees can only move their own tasks
       if (currentUser.role !== 'admin' && existing.assignee_id !== currentUser.id) {
         return;
       }
@@ -3016,52 +2121,15 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         todayDate
       );
 
-      let nextTasksStatusUpdated: Task[] = [];
-      setTasks((prev) => {
-        const next = prev.map((t) =>
-          t.id === taskId
-            ? {
-                ...t,
-                status,
-                completed_at: completedAt,
-                is_delayed: delayInfo.isDelayed,
-                updated_at: now,
-              }
-            : t
-        );
-        nextTasksStatusUpdated = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_tasks', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-
-      if (nextTasksStatusUpdated.length > 0) {
-        lastLocalActionTime.current = Date.now();
-        lastSyncedVersion.current = now;
-        fetch('/api/sync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            updates: { tasks: nextTasksStatusUpdated },
-          }),
-        })
-          .then((res) => res.json())
-          .then((data) => {
-            if (data?.timestamp) {
-              lastSyncedVersion.current = String(data.timestamp);
-            }
-          })
-          .catch((e) => console.warn('Status update sync error:', e));
-
-        try {
-          syncChannelRef.current?.postMessage({
-            key: 'tasks',
-            data: nextTasksStatusUpdated,
-            version: now,
-          });
-        } catch {}
-      }
+      patchTaskMut({
+        taskId,
+        patch: {
+          status,
+          completed_at: completedAt,
+          is_delayed: delayInfo.isDelayed,
+          updated_at: now,
+        },
+      }).catch((e) => console.warn('Update task status error:', e));
 
       appendLog(
         projectId,
@@ -3072,7 +2140,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         { before: existing.status, after: status }
       );
     },
-    [projects, permissions.canUpdateTaskStatus, tasks, todayDate, currentUser, appendLog]
+    [projects, permissions.canUpdateTaskStatus, tasks, todayDate, currentUser, patchTaskMut, appendLog]
   );
 
   const updateTaskDeliverable = useCallback(
@@ -3083,29 +2151,17 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       const existing = tasks.find((t) => t.id === taskId);
       if (!existing) return;
 
-      // Option A strict check: Employees can only submit deliverables for their own tasks
       if (currentUser.role !== 'admin' && existing.assignee_id !== currentUser.id) {
         return;
       }
 
-      let nextTasksDeliv: Task[] = [];
-      setTasks((prev) => {
-        const next = prev.map((t) =>
-          t.id === taskId
-            ? {
-                ...t,
-                deliverable_url: deliverableUrl.trim(),
-                updated_at: new Date().toISOString(),
-              }
-            : t
-        );
-        nextTasksDeliv = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_tasks', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-      instantSync({ tasks: nextTasksDeliv });
+      patchTaskMut({
+        taskId,
+        patch: {
+          deliverable_url: deliverableUrl.trim(),
+          updated_at: new Date().toISOString(),
+        },
+      }).catch((e) => console.warn('Update deliverable error:', e));
 
       appendLog(
         projectId,
@@ -3116,7 +2172,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         { deliverable_url: deliverableUrl.trim() }
       );
     },
-    [projects, permissions.canUpdateTaskStatus, tasks, currentUser, appendLog]
+    [projects, permissions.canUpdateTaskStatus, tasks, currentUser, patchTaskMut, appendLog]
   );
 
   const toggleProjectArchive = useCallback(
@@ -3128,26 +2184,15 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       const nextArchived = !proj.is_archived;
       const now = new Date().toISOString();
 
-      let nextProjectsArch: Project[] = [];
-      setProjects((prev) => {
-        const next: Project[] = prev.map((p) =>
-          p.id === projectId
-            ? {
-                ...p,
-                is_archived: nextArchived,
-                status: nextArchived ? 'Completed/Archived' : 'In Execution',
-                actual_end_date: nextArchived ? now.slice(0, 10) : null,
-                updated_at: now,
-              }
-            : p
-        );
-        nextProjectsArch = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_projects', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-      instantSync({ projects: nextProjectsArch });
+      patchProjectMut({
+        projectId,
+        patch: {
+          is_archived: nextArchived,
+          status: nextArchived ? 'Completed/Archived' : 'In Execution',
+          actual_end_date: nextArchived ? now.slice(0, 10) : null,
+          updated_at: now,
+        },
+      }).catch((e) => console.warn('Toggle archive error:', e));
 
       appendLog(
         projectId,
@@ -3160,7 +2205,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         { is_archived: nextArchived }
       );
     },
-    [permissions.canToggleArchive, projects, currentUser.name, appendLog]
+    [permissions.canToggleArchive, projects, currentUser.name, patchProjectMut, appendLog]
   );
 
   const submitClientSignOff = useCallback(
@@ -3170,25 +2215,14 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       const del = req?.deliverables_json.find((d) => d.id === deliverableId);
       if (!req || !del) return;
 
-      let nextReqsSign: ProjectRequirement[] = [];
-      setRequirements((prev) => {
-        const next = prev.map((r) =>
-          r.project_id === projectId
-            ? {
-                ...r,
-                deliverables_json: r.deliverables_json.map((d) =>
-                  d.id === deliverableId ? { ...d, client_signed_off: true } : d
-                ),
-              }
-            : r
-        );
-        nextReqsSign = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_requirements', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-      instantSync({ requirements: nextReqsSign });
+      patchRequirementMut({
+        projectId,
+        patch: {
+          deliverables_json: req.deliverables_json.map((d) =>
+            d.id === deliverableId ? { ...d, client_signed_off: true } : d
+          ),
+        },
+      }).catch((e) => console.warn('Client signoff error:', e));
 
       appendLog(
         projectId,
@@ -3199,7 +2233,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         { deliverable: del.title }
       );
     },
-    [permissions.canSubmitClientSignOff, requirements, currentUser.name, appendLog]
+    [permissions.canSubmitClientSignOff, requirements, currentUser.name, patchRequirementMut, appendLog]
   );
 
   const createRenewal = useCallback(
@@ -3217,18 +2251,9 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         renewed: false,
         created_at: now,
       };
-
-      let nextRenewals: RenewalItem[] = [];
-      setRenewals((prev) => {
-        const next = [newRenewal, ...prev];
-        nextRenewals = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_renewals', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-      instantSync({ renewals: nextRenewals });
-
+      createRenewalMut({ renewal: newRenewal }).catch((e) =>
+        console.warn('Create renewal error:', e)
+      );
       appendLog(
         input.project_id,
         'TASK_CREATED',
@@ -3237,37 +2262,26 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         `Added renewal: "${newRenewal.title}" (Due: ${newRenewal.renewal_date})`,
         { title: newRenewal.title, vendor: newRenewal.vendor, amount: newRenewal.amount }
       );
-
       return newRenewal;
     },
-    [appendLog]
+    [createRenewalMut, appendLog]
   );
 
   const updateRenewal = useCallback(
     (input: UpdateRenewalInput) => {
-      let nextRenewals: RenewalItem[] = [];
-      setRenewals((prev) => {
-        const next = prev.map((r) => {
-          if (r.id !== input.id) return r;
-          return {
-            ...r,
-            title: input.title.trim(),
-            vendor: input.vendor?.trim() || undefined,
-            amount: Number(input.amount) || 0,
-            renewal_date: input.renewal_date,
-            remind_days: input.remind_days ?? 7,
-            updated_at: new Date().toISOString(),
-          };
-        });
-        nextRenewals = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_renewals', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-      instantSync({ renewals: nextRenewals });
+      patchRenewalMut({
+        renewalId: input.id,
+        patch: {
+          title: input.title.trim(),
+          vendor: input.vendor?.trim() || undefined,
+          amount: Number(input.amount) || 0,
+          renewal_date: input.renewal_date,
+          remind_days: input.remind_days ?? 7,
+          updated_at: new Date().toISOString(),
+        },
+      }).catch((e) => console.warn('Update renewal error:', e));
     },
-    []
+    [patchRenewalMut]
   );
 
   const markRenewalAsRenewed = useCallback(
@@ -3277,41 +2291,29 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
 
       const todayStr = new Date().toISOString().split('T')[0];
       const now = new Date().toISOString();
+      const nextItem: RenewalItem = {
+        id: makeId('ren'),
+        project_id: existing.project_id,
+        title: existing.title,
+        vendor: existing.vendor,
+        amount: existing.amount,
+        renewal_date: input.next_renewal_date,
+        remind_days: existing.remind_days || 7,
+        renewed: false,
+        created_at: now,
+      };
 
-      let nextRenewals: RenewalItem[] = [];
-      setRenewals((prev) => {
-        const updated = prev.map((r) => {
-          if (r.id !== input.id) return r;
-          return {
-            ...r,
-            renewed: true,
-            renewed_on: todayStr,
-            renewed_amount_paid: Number(input.amount_paid) || r.amount,
-            renewed_notes: input.notes?.trim() || undefined,
-            updated_at: now,
-          };
-        });
-
-        const nextId = makeId('ren');
-        const nextItem: RenewalItem = {
-          id: nextId,
-          project_id: existing.project_id,
-          title: existing.title,
-          vendor: existing.vendor,
-          amount: existing.amount,
-          renewal_date: input.next_renewal_date,
-          remind_days: existing.remind_days || 7,
-          renewed: false,
-          created_at: now,
-        };
-
-        nextRenewals = [nextItem, ...updated];
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_renewals', JSON.stringify(nextRenewals)); } catch {}
-        }
-        return nextRenewals;
-      });
-      instantSync({ renewals: nextRenewals });
+      markRenewalRenewedMut({
+        renewalId: input.id,
+        patch: {
+          renewed: true,
+          renewed_on: todayStr,
+          renewed_amount_paid: Number(input.amount_paid) || existing.amount,
+          renewed_notes: input.notes?.trim() || undefined,
+          updated_at: now,
+        },
+        nextRenewal: nextItem,
+      }).catch((e) => console.warn('Mark renewal renewed error:', e));
 
       appendLog(
         existing.project_id,
@@ -3322,22 +2324,13 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         { title: existing.title, next_renewal_date: input.next_renewal_date }
       );
     },
-    [renewals, appendLog]
+    [renewals, markRenewalRenewedMut, appendLog]
   );
 
   const deleteRenewal = useCallback(
     (renewalId: string) => {
       const existing = renewals.find((r) => r.id === renewalId);
-      let nextRenewals: RenewalItem[] = [];
-      setRenewals((prev) => {
-        const next = prev.filter((r) => r.id !== renewalId);
-        nextRenewals = next;
-        if (typeof window !== 'undefined') {
-          try { localStorage.setItem('holabusiness_renewals', JSON.stringify(next)); } catch {}
-        }
-        return next;
-      });
-      instantSync({ renewals: nextRenewals });
+      deleteRenewalMut({ renewalId }).catch((e) => console.warn('Delete renewal error:', e));
       if (existing) {
         appendLog(
           existing.project_id,
@@ -3349,7 +2342,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         );
       }
     },
-    [renewals, appendLog]
+    [renewals, deleteRenewalMut, appendLog]
   );
 
   const value: AuthContextValue = {
@@ -3428,10 +2421,28 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
     isCloudSynced,
   };
 
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+export function AppProviders({ children }: { children: React.ReactNode }) {
+  const [queryClient] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: {
+            staleTime: 30_000,
+            refetchOnWindowFocus: false,
+          },
+        },
+      })
+  );
+
   return (
-    <QueryClientProvider client={queryClient}>
-      <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
-    </QueryClientProvider>
+    <ConvexProvider client={convexClient}>
+      <QueryClientProvider client={queryClient}>
+        <AppProvidersInner>{children}</AppProvidersInner>
+      </QueryClientProvider>
+    </ConvexProvider>
   );
 }
 
